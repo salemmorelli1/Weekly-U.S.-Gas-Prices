@@ -1,0 +1,329 @@
+name: Weekly Gas Price Forecast
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Canonical weekly production pipeline for GasPriceForecast.
+#
+# Runs every Monday at 10:35 AM ET (America/New_York).
+# EIA releases weekly gas price data Monday mornings — the 10:35 AM start
+# ensures the EIA data is live before Part 0c fetches it.
+#
+# Execution order:
+#   Part 0  → Part 0b* → Part 0c* → Part 6 → Part 1
+#   → Part 2 → Part 2b* → Part 2a* → Part 3 → Part 9
+#   (* optional / non-blocking)
+#
+# Secrets required (Settings → Secrets → Actions):
+#   FRED_API_KEY      free at https://fred.stlouisfed.org/docs/api/api_key.html
+#   EIA_API_KEY       free at https://www.eia.gov/opendata/register.php
+#   COLLECTAPI_KEY    free at https://collectapi.com
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # Every Monday at 10:35 AM Eastern Time
+    - cron: "35 10 * * 1"
+      timezone: "America/New_York"
+  workflow_dispatch:
+    inputs:
+      retrain:
+        description: "Force full model retraining (re-fit Part 2 from scratch)"
+        required: false
+        default: false
+        type: boolean
+      skip_lstm:
+        description: "Skip Part 2a LSTM sleeve (faster run)"
+        required: false
+        default: false
+        type: boolean
+      skip_collectapi:
+        description: "Skip Part 0b CollectAPI live prices"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  # Never cancel a running forecast — always let it finish
+  group: gas-price-production
+  cancel-in-progress: false
+
+env:
+  GASPRICE_ROOT: ${{ github.workspace }}
+  FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+  EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+  COLLECTAPI_KEY: ${{ secrets.COLLECTAPI_KEY }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  forecast:
+    name: Run weekly forecast pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────
+      - name: Check out repo
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # ── 2. Python ────────────────────────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      # ── 3. Install dependencies ──────────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ── 4. Restore accumulated artifacts from remote ─────────────────────
+      # Pulls the prediction log, trained models, and live attribution history
+      # that were committed by previous weekly runs. Without this step, each
+      # run would start cold with no history.
+      - name: Restore accumulated artifacts from remote
+        run: |
+          git fetch origin "${GITHUB_REF_NAME}" --quiet || true
+
+          for path in \
+            artifacts_part3/prediction_log.csv \
+            artifacts_part3/gas_part3_summary.json \
+            artifacts_part3/gas_fusion_tape.parquet \
+            artifacts_part2/gas_part2_models.pkl \
+            artifacts_part2/gas_part2_summary.json \
+            artifacts_part2b/gas_xgb_models.pkl \
+            artifacts_part2b/gas_part2b_summary.json \
+            artifacts_part2a/gas_lstm_model.pt \
+            artifacts_part2a/gas_part2a_summary.json \
+            artifacts_part6/gas_regime_model.pkl \
+            artifacts_part6/gas_regime_meta.json \
+            artifacts_part6/gas_regime_tape.parquet \
+            artifacts_part9/live_attribution_report.json \
+            artifacts_part9/live_attribution_tape.csv
+          do
+            git checkout "origin/${GITHUB_REF_NAME}" -- "$path" 2>/dev/null \
+              && echo "Restored: $path" \
+              || echo "Not yet in repo (first run?): $path"
+          done
+
+      # ── 5. Decide run arguments ──────────────────────────────────────────
+      - name: Decide run arguments
+        id: args
+        run: |
+          ARGS="--force"
+
+          RETRAIN="${{ github.event.inputs.retrain || 'false' }}"
+          if [ "$RETRAIN" = "true" ]; then
+            ARGS="$ARGS --retrain"
+            echo "Flag: --retrain (forced full retraining)"
+          fi
+
+          SKIP_LSTM="${{ github.event.inputs.skip_lstm || 'false' }}"
+          if [ "$SKIP_LSTM" = "true" ]; then
+            ARGS="$ARGS --skip-lstm"
+            echo "Flag: --skip-lstm"
+          fi
+
+          SKIP_COLLECTAPI="${{ github.event.inputs.skip_collectapi || 'false' }}"
+          if [ "$SKIP_COLLECTAPI" = "true" ]; then
+            ARGS="$ARGS --skip-collectapi"
+            echo "Flag: --skip-collectapi"
+          fi
+
+          echo "args=${ARGS}" >> "$GITHUB_OUTPUT"
+          echo "Run arguments: ${ARGS}"
+
+      # ── 6. Validate API keys ─────────────────────────────────────────────
+      - name: Validate API key presence
+        run: |
+          echo "=== API KEY AUDIT ==="
+          if [ -z "$FRED_API_KEY" ]; then
+            echo "::error::FRED_API_KEY is not set. This key is required."
+            echo "Add it at: Settings → Secrets → Actions → New repository secret"
+            exit 1
+          else
+            echo "FRED_API_KEY:   set"
+          fi
+
+          if [ -z "$EIA_API_KEY" ]; then
+            echo "::warning::EIA_API_KEY not set — Part 0c EIA direct data will be skipped."
+          else
+            echo "EIA_API_KEY:    set"
+          fi
+
+          if [ -z "$COLLECTAPI_KEY" ]; then
+            echo "::warning::COLLECTAPI_KEY not set — Part 0b live regional prices will be skipped."
+          else
+            echo "COLLECTAPI_KEY: set"
+          fi
+
+      # ── 7. Create artifact directories ───────────────────────────────────
+      - name: Create artifact directories
+        run: |
+          mkdir -p \
+            artifacts_part0 \
+            artifacts_part1 \
+            artifacts_part2 \
+            artifacts_part2a \
+            artifacts_part2b \
+            artifacts_part3 \
+            artifacts_part6 \
+            artifacts_part9 \
+            logs
+
+      # ── 8. Run the full pipeline ─────────────────────────────────────────
+      - name: Run weekly pipeline
+        run: |
+          python gas_run_weekly_prediction.py ${{ steps.args.outputs.args }}
+
+      # ── 9. Verify required artifacts ─────────────────────────────────────
+      # Runs even if the pipeline step fails so we can always see what's missing.
+      - name: Verify required artifacts
+        id: verify
+        if: always()
+        run: |
+          echo "=== ARTIFACT VERIFICATION ==="
+          missing=0
+
+          for path in \
+            artifacts_part0/part0_summary.json \
+            artifacts_part0/gas_weekly_master.parquet \
+            artifacts_part1/gas_feature_matrix.parquet \
+            artifacts_part1/part1_summary.json \
+            artifacts_part2/gas_forecast_tape.parquet \
+            artifacts_part2/gas_part2_summary.json \
+            artifacts_part3/prediction_log.csv \
+            artifacts_part3/gas_part3_summary.json \
+            artifacts_part3/gas_fusion_tape.parquet \
+            artifacts_part6/gas_regime_meta.json \
+            artifacts_part6/gas_regime_tape.parquet \
+            artifacts_part9/live_attribution_report.json
+          do
+            if [ -f "$path" ]; then
+              echo "  OK:      $path"
+            else
+              echo "  MISSING: $path"
+              missing=$((missing + 1))
+            fi
+          done
+
+          echo "missing=$missing" >> "$GITHUB_OUTPUT"
+          echo ""
+          echo "Required missing: $missing"
+
+      # ── 10. Fail if required artifacts are missing ───────────────────────
+      - name: Fail if required artifacts are missing
+        if: steps.verify.outputs.missing != '0'
+        run: |
+          echo "::error::${{ steps.verify.outputs.missing }} required artifact(s) missing."
+          echo "The pipeline did not produce all expected outputs."
+          echo "Check the 'Run weekly pipeline' step logs above for errors."
+          exit 1
+
+      # ── 11. Print forecast summary ────────────────────────────────────────
+      - name: Print forecast summary
+        run: |
+          echo "=== LATEST WEEKLY FORECAST ==="
+          python - <<'EOF'
+          import json, os
+          from pathlib import Path
+
+          root = os.environ.get("GASPRICE_ROOT", ".")
+
+          summary_path = Path(root) / "artifacts_part3" / "gas_part3_summary.json"
+          if summary_path.exists():
+              with open(summary_path) as f:
+                  s = json.load(f)
+              pred = s.get("latest_prediction", {})
+              weights = s.get("fusion_weights", {})
+              print(f"  Decision date:   {pred.get('decision_date', 'N/A')}")
+              print(f"  Target date:     {pred.get('target_date', 'N/A')}")
+              print(f"  Fusion forecast: ${pred.get('pred_fusion', 'N/A'):.3f}/gal")
+              print(f"  Confidence:      {pred.get('confidence', 'N/A')}")
+              print(f"  Regime:          {pred.get('regime', 'N/A')}")
+              print(f"  Active sleeves:  {s.get('active_sleeves', [])}")
+              print(f"  Fusion weights:  {weights}")
+          else:
+              print("  Part 3 summary not found.")
+
+          print("")
+          print("=== MODEL HEALTH ===")
+          report_path = Path(root) / "artifacts_part9" / "live_attribution_report.json"
+          if report_path.exists():
+              with open(report_path) as f:
+                  r = json.load(f)
+              health = r.get("model_health", {})
+              m = r.get("all_time_metrics", {})
+              dm = r.get("diebold_mariano", {})
+              print(f"  Health status:  {health.get('health_status', 'N/A')}")
+              print(f"  Realized obs:   {r.get('n_realized', 0)}")
+              if m.get("mae"): print(f"  All-time MAE:   ${m['mae']:.4f}/gal")
+              if m.get("mape"): print(f"  All-time MAPE:  {m['mape']:.2f}%")
+              if m.get("dir_acc"): print(f"  Direction acc:  {m['dir_acc']:.1%}")
+              print(f"  DM test:        {dm.get('dm_interpretation', 'N/A')}")
+              print(f"  Recommendation: {health.get('recommendation', 'N/A')}")
+          else:
+              print("  Attribution report not found.")
+          EOF
+
+      # ── 12. Commit and push all forecast artifacts ────────────────────────
+      - name: Commit and push forecast artifacts
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Stage all artifact directories
+          git add -f \
+            artifacts_part0/ \
+            artifacts_part1/ \
+            artifacts_part2/ \
+            artifacts_part3/ \
+            artifacts_part6/ \
+            artifacts_part9/ || true
+
+          # Optional sleeve dirs — only exist when sleeves ran and passed gate
+          git add -f artifacts_part2b/ 2>/dev/null || true
+          git add -f artifacts_part2a/ 2>/dev/null || true
+
+          # Exit cleanly if nothing changed
+          if git diff --cached --quiet; then
+            echo "No artifact changes to commit."
+            exit 0
+          fi
+
+          TODAY="$(date -u '+%Y-%m-%d')"
+          git commit -m "Weekly gas price forecast artifacts — ${TODAY}"
+
+          # Pull with ours strategy so concurrent writes don't conflict
+          git pull origin "${GITHUB_REF_NAME}" \
+            --no-rebase \
+            --strategy-option=ours \
+            --no-edit || true
+
+          git push origin HEAD:"${GITHUB_REF_NAME}"
+          echo "Artifacts committed and pushed."
+
+      # ── 13. Upload artifacts to GitHub Actions UI ─────────────────────────
+      # Kept as a secondary backup; the primary record is the git commit above.
+      - name: Upload artifacts to GitHub Actions UI
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gas-forecast-${{ github.run_id }}
+          retention-days: 90
+          path: |
+            artifacts_part3/prediction_log.csv
+            artifacts_part3/gas_part3_summary.json
+            artifacts_part3/gas_fusion_tape.csv
+            artifacts_part9/live_attribution_report.json
+            artifacts_part9/live_attribution_tape.csv
+            artifacts_part2/gas_part2_summary.json
+            artifacts_part2b/gas_part2b_summary.json
+            artifacts_part2a/gas_part2a_summary.json
+            artifacts_part6/gas_regime_meta.json
