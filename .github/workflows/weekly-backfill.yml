@@ -1,0 +1,238 @@
+name: Weekly EIA Realized Price Backfill
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Backfills realized EIA weekly gas prices into the prediction log and
+# re-runs live attribution diagnostics (Part 9).
+#
+# Kept separate from the production workflow intentionally:
+#   - Uses only lightweight dependencies (no sklearn/torch)
+#   - Runs Wednesday at 08:00 AM ET — 2 days after Monday EIA release,
+#     giving EIA time to publish and FRED time to reflect the data
+#   - Can be re-run independently without triggering a full retrain
+#   - Uses [skip ci] on its commit to prevent a Pages redeploy loop
+#
+# Secrets required:
+#   FRED_API_KEY   — primary realized price source (GASREGCOVW)
+#   EIA_API_KEY    — fallback if FRED is unavailable
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # Every Wednesday at 8:00 AM Eastern Time
+    # (2 days after Monday EIA release — ensures FRED has propagated the data)
+    - cron: "0 8 * * 3"
+      timezone: "America/New_York"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Audit only — print backfill plan without writing"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gas-price-production
+  cancel-in-progress: false
+
+env:
+  GASPRICE_ROOT: ${{ github.workspace }}
+  FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+  EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  backfill:
+    name: Backfill realized EIA prices + re-run Part 9
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────
+      - name: Check out repo
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # ── 2. Python — lightweight install only ─────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install lightweight backfill dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas requests fredapi pyarrow scipy
+
+      # ── 3. Restore accumulating artifacts from remote ────────────────────
+      # Must restore the prediction log and attribution history so the backfill
+      # can append to the existing record rather than starting from scratch.
+      - name: Restore accumulating artifacts from remote
+        run: |
+          git fetch origin "${GITHUB_REF_NAME}" --quiet || true
+
+          for path in \
+            artifacts_part0/gas_weekly_master.parquet \
+            artifacts_part3/prediction_log.csv \
+            artifacts_part3/gas_part3_summary.json \
+            artifacts_part9/live_attribution_report.json \
+            artifacts_part9/live_attribution_tape.csv
+          do
+            git checkout "origin/${GITHUB_REF_NAME}" -- "$path" 2>/dev/null \
+              && echo "Restored: $path" \
+              || echo "Not yet in repo (first run?): $path"
+          done
+
+      # ── 4. Skip if prediction log does not exist yet ─────────────────────
+      - name: Skip if prediction log does not exist yet
+        id: precheck
+        run: |
+          if [ -s artifacts_part3/prediction_log.csv ]; then
+            echo "run_backfill=true" >> "$GITHUB_OUTPUT"
+            ROWS=$(tail -n +2 artifacts_part3/prediction_log.csv | wc -l)
+            echo "Prediction log found with ${ROWS} row(s). Proceeding with backfill."
+          else
+            echo "run_backfill=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No prediction_log.csv found yet."
+            echo "Run the weekly production workflow first (weekly-production.yml)."
+          fi
+
+      # ── 5. Validate API keys ─────────────────────────────────────────────
+      - name: Validate API key presence
+        if: steps.precheck.outputs.run_backfill == 'true'
+        run: |
+          if [ -z "$FRED_API_KEY" ] && [ -z "$EIA_API_KEY" ]; then
+            echo "::error::Neither FRED_API_KEY nor EIA_API_KEY is set."
+            echo "At least one is required to fetch realized gas prices."
+            exit 1
+          fi
+
+          if [ -n "$FRED_API_KEY" ]; then
+            echo "FRED_API_KEY:  set (primary)"
+          else
+            echo "::warning::FRED_API_KEY not set — falling back to EIA API."
+          fi
+
+          if [ -n "$EIA_API_KEY" ]; then
+            echo "EIA_API_KEY:   set (fallback)"
+          fi
+
+      # ── 6. Build artifact directories if missing ─────────────────────────
+      - name: Ensure artifact directories exist
+        if: steps.precheck.outputs.run_backfill == 'true'
+        run: |
+          mkdir -p artifacts_part3 artifacts_part9 artifacts_part0
+
+      # ── 7. Run backfill ───────────────────────────────────────────────────
+      - name: Run realized price backfill
+        if: steps.precheck.outputs.run_backfill == 'true'
+        run: |
+          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "DRY RUN mode — auditing without writing."
+            python gas_backfill_realized.py --dry-run
+          else
+            python gas_backfill_realized.py
+          fi
+
+      # ── 8. Re-run Part 9 live attribution ────────────────────────────────
+      # Recomputes DM test, rolling MAPE, concept drift, and health status
+      # now that newly realized rows are in the prediction log.
+      - name: Re-run Part 9 live attribution
+        if: >
+          steps.precheck.outputs.run_backfill == 'true' &&
+          github.event.inputs.dry_run != 'true'
+        run: |
+          python gas_part9_live_attribution.py
+
+      # ── 9. Print attribution summary ─────────────────────────────────────
+      - name: Print attribution summary
+        if: steps.precheck.outputs.run_backfill == 'true'
+        run: |
+          echo "=== BACKFILL + ATTRIBUTION SUMMARY ==="
+          python - <<'EOF'
+          import json, os
+          from pathlib import Path
+
+          root = os.environ.get("GASPRICE_ROOT", ".")
+
+          # Prediction log stats
+          log_path = Path(root) / "artifacts_part3" / "prediction_log.csv"
+          if log_path.exists():
+              import csv
+              with open(log_path) as f:
+                  rows = list(csv.DictReader(f))
+              total = len(rows)
+              realized = sum(
+                  1 for r in rows
+                  if r.get("actual", "").strip() not in ("", "nan", "NaN")
+              )
+              print(f"  Prediction log rows:   {total}")
+              print(f"  Rows with actuals:     {realized}")
+              print(f"  Rows pending backfill: {total - realized}")
+          else:
+              print("  Prediction log not found.")
+
+          # Attribution report
+          print("")
+          report_path = Path(root) / "artifacts_part9" / "live_attribution_report.json"
+          if report_path.exists():
+              with open(report_path) as f:
+                  r = json.load(f)
+              health = r.get("model_health", {})
+              m = r.get("all_time_metrics", {})
+              dm = r.get("diebold_mariano", {})
+              drift = r.get("concept_drift", {})
+              print(f"  Health status:     {health.get('health_status', 'N/A')}")
+              print(f"  Realized obs:      {r.get('n_realized', 0)}")
+              if m.get("mae"):  print(f"  All-time MAE:      ${m['mae']:.4f}/gal")
+              if m.get("mape"): print(f"  All-time MAPE:     {m['mape']:.2f}%")
+              if m.get("dir_acc"): print(f"  Direction acc:     {m['dir_acc']:.1%}")
+              if r.get("beats_naive_pct"):
+                  print(f"  Beats naive:       {r['beats_naive_pct']:.1f}%")
+              print(f"  DM test:           {dm.get('dm_interpretation', 'N/A')} "
+                    f"(t={dm.get('dm_t_stat', 'N/A')})")
+              print(f"  Drift status:      {drift.get('status', 'N/A')}")
+              print(f"  Recommendation:    {health.get('recommendation', 'N/A')}")
+          else:
+              print("  Attribution report not found.")
+          EOF
+
+      # ── 10. Commit and push backfill artifacts ────────────────────────────
+      - name: Commit and push backfill artifacts
+        if: >
+          steps.precheck.outputs.run_backfill == 'true' &&
+          github.event.inputs.dry_run != 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add -f \
+            artifacts_part3/prediction_log.csv \
+            artifacts_part3/gas_part3_summary.json \
+            artifacts_part9/live_attribution_report.json \
+            artifacts_part9/live_attribution_tape.csv || true
+
+          if git diff --cached --quiet; then
+            echo "No backfill changes to commit."
+            exit 0
+          fi
+
+          TODAY="$(date -u '+%Y-%m-%d')"
+          # [skip ci] prevents this commit from triggering a Pages redeploy loop.
+          # Pages is re-deployed by the weekly production commit, not the backfill.
+          git commit -m "Backfill realized EIA gas prices — ${TODAY} [skip ci]"
+
+          # Pull with ours strategy so concurrent writes never conflict
+          git pull origin "${GITHUB_REF_NAME}" \
+            --no-rebase \
+            --strategy-option=ours \
+            --no-edit || true
+
+          git push origin HEAD:"${GITHUB_REF_NAME}"
+          echo "Backfill artifacts committed and pushed."

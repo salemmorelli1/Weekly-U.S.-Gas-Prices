@@ -1,0 +1,128 @@
+name: Deploy GitHub Pages
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deploys the GasPriceForecast dashboard (index.html) to GitHub Pages.
+#
+# Triggers on:
+#   - Any push to main that touches the dashboard or artifact JSON/CSV files
+#   - Manual workflow_dispatch (re-deploy without a code push)
+#
+# Enable Pages in your repo:
+#   Settings → Pages → Source → GitHub Actions
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "index.html"
+      - "assets/**"
+      - ".github/workflows/pages.yml"
+      - "artifacts_part2/gas_part2_summary.json"
+      - "artifacts_part2b/gas_part2b_summary.json"
+      - "artifacts_part2a/gas_part2a_summary.json"
+      - "artifacts_part3/prediction_log.csv"
+      - "artifacts_part3/gas_part3_summary.json"
+      - "artifacts_part3/gas_fusion_tape.csv"
+      - "artifacts_part6/gas_regime_meta.json"
+      - "artifacts_part9/live_attribution_report.json"
+      - "artifacts_part9/live_attribution_tape.csv"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  # ── Build static site ───────────────────────────────────────────────────────
+  build:
+    name: Build static site
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+
+      - name: Set up Pages
+        uses: actions/configure-pages@v5
+
+      - name: Prepare site
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p _site
+
+          if [ ! -f index.html ]; then
+            echo "ERROR: index.html not found at repository root."
+            echo "Commit index.html to the root of the repo, then rerun this workflow."
+            exit 1
+          fi
+
+          # Copy dashboard
+          cp index.html _site/index.html
+
+          # Copy static assets if they exist
+          if [ -d assets ]; then
+            cp -r assets _site/assets
+          fi
+
+          if [ -f favicon.ico ]; then
+            cp favicon.ico _site/favicon.ico
+          fi
+
+          # Copy JSON/CSV data files that the dashboard JavaScript reads at runtime.
+          # These are committed to the repo by the weekly production workflow.
+          for src in \
+            "artifacts_part3/prediction_log.csv" \
+            "artifacts_part3/gas_part3_summary.json" \
+            "artifacts_part3/gas_fusion_tape.csv" \
+            "artifacts_part2/gas_part2_summary.json" \
+            "artifacts_part2b/gas_part2b_summary.json" \
+            "artifacts_part2a/gas_part2a_summary.json" \
+            "artifacts_part6/gas_regime_meta.json" \
+            "artifacts_part9/live_attribution_report.json" \
+            "artifacts_part9/live_attribution_tape.csv"
+          do
+            if [ -f "$src" ]; then
+              # Copy flat — dashboard fetches by filename
+              cp "$src" "_site/$(basename $src)"
+              echo "Copied: $src"
+            else
+              echo "Not yet available (pipeline hasn't run): $src"
+            fi
+          done
+
+          # Prevent Jekyll processing
+          touch _site/.nojekyll
+
+          echo ""
+          echo "Site contents:"
+          find _site -maxdepth 2 -type f | sort
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  # ── Deploy ──────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
