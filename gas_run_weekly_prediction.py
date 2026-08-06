@@ -170,7 +170,12 @@ def run_subprocess(
 
 # ── Pipeline runner ────────────────────────────────────────────────────────────
 
-def run_pipeline(project_dir: Path, with_backfill: bool = False) -> int:
+def run_pipeline(
+    project_dir: Path,
+    with_backfill: bool = False,
+    skip_lstm: bool = False,
+    skip_collectapi: bool = False,
+) -> int:
     common_env = {
         "GASPRICE_ROOT": str(project_dir),
     }
@@ -180,9 +185,23 @@ def run_pipeline(project_dir: Path, with_backfill: bool = False) -> int:
           "Part2b* -> Part2a* -> Part3 -> Part9")
     print("(* optional / non-blocking)\n")
 
+    # FIX (Audit 2026-08): the GitHub workflow has always passed --skip-lstm
+    # and --skip-collectapi, but the runner silently discarded them via
+    # parse_known_args — the toggles in the workflow_dispatch UI did nothing.
+    skipped_by_flag = set()
+    if skip_lstm:
+        skipped_by_flag.add("PART2A")
+        print("[Runner] --skip-lstm: PART2A (LSTM sleeve) will be skipped.")
+    if skip_collectapi:
+        skipped_by_flag.add("PART0B")
+        print("[Runner] --skip-collectapi: PART0B (CollectAPI) will be skipped.")
+
     for label in PIPELINE_ORDER:
         script_name = CANONICAL_FILES.get(label)
         if script_name is None:
+            continue
+        if label in skipped_by_flag:
+            print(f"\n[INFO] {label} ({script_name}) skipped by CLI flag.")
             continue
         script = (project_dir / script_name).resolve()
         is_optional = label in OPTIONAL_PARTS
@@ -245,6 +264,23 @@ def main() -> int:
         help="Also run gas_backfill_realized.py after the pipeline.",
     )
     parser.add_argument(
+        "--skip-lstm",
+        action="store_true",
+        help="Skip the Part 2a LSTM sleeve (faster run).",
+    )
+    parser.add_argument(
+        "--skip-collectapi",
+        action="store_true",
+        help="Skip Part 0b CollectAPI live prices.",
+    )
+    parser.add_argument(
+        "--retrain",
+        action="store_true",
+        help="Accepted for workflow compatibility. Every weekly run already "
+             "retrains all sleeves from scratch on the full labeled history; "
+             "this flag is a no-op documented for the workflow_dispatch UI.",
+    )
+    parser.add_argument(
         "--direct",
         action="store_true",
         help="Accepted for compatibility; pipeline always runs directly.",
@@ -278,8 +314,17 @@ def main() -> int:
         print(f"\n[ERROR] Missing required files: {missing}")
         return 1
 
+    if args.retrain:
+        print("[Runner] --retrain: acknowledged (weekly runs always retrain "
+              "from scratch; no cached-model fast path exists).")
+
     # Run
-    rc = run_pipeline(PROJECT_DIR, with_backfill=args.with_backfill)
+    rc = run_pipeline(
+        PROJECT_DIR,
+        with_backfill=args.with_backfill,
+        skip_lstm=args.skip_lstm,
+        skip_collectapi=args.skip_collectapi,
+    )
 
     if rc != 0:
         print(f"\n[Runner] Pipeline exited with code {rc}.")
