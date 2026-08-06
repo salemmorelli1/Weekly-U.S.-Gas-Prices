@@ -74,9 +74,37 @@ warnings.filterwarnings("ignore")
 SCRIPT_VERSION = "GAS_PART0B_V1_CANONICAL"
 
 # ── CollectAPI endpoints ───────────────────────────────────────────────────────
+# FIX (Audit 2026-08): the previous endpoint "gasPrice/gasPrice" does not
+# exist in CollectAPI's Gas Prices API. The state-level U.S. feed is
+# "gasPrice/allUsaPrice"; single-state lookup is "gasPrice/stateUsaPrice".
+# The weather endpoint is "weather/getWeather" (not "weather/getAdress").
 COLLECTAPI_BASE = "https://api.collectapi.com"
-GAS_PRICE_ENDPOINT = f"{COLLECTAPI_BASE}/gasPrice/gasPrice"
-WEATHER_ENDPOINT   = f"{COLLECTAPI_BASE}/weather/getAdress"
+GAS_PRICE_ENDPOINT       = f"{COLLECTAPI_BASE}/gasPrice/allUsaPrice"
+GAS_PRICE_STATE_ENDPOINT = f"{COLLECTAPI_BASE}/gasPrice/stateUsaPrice"
+WEATHER_ENDPOINT         = f"{COLLECTAPI_BASE}/weather/getWeather"
+
+# FIX (Audit 2026-08): allUsaPrice items carry the FULL state name in the
+# "name" field (e.g. "Alaska"), not a 2-letter "state" code. The previous
+# parser looked for a nonexistent "state" field, so state_prices was always
+# empty and every regional average silently came back missing. Map names to
+# codes explicitly.
+US_STATE_NAME_TO_CODE = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+    "california": "CA", "colorado": "CO", "connecticut": "CT", "delaware": "DE",
+    "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID",
+    "illinois": "IL", "indiana": "IN", "iowa": "IA", "kansas": "KS",
+    "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD",
+    "massachusetts": "MA", "michigan": "MI", "minnesota": "MN",
+    "mississippi": "MS", "missouri": "MO", "montana": "MT", "nebraska": "NE",
+    "nevada": "NV", "new hampshire": "NH", "new jersey": "NJ",
+    "new mexico": "NM", "new york": "NY", "north carolina": "NC",
+    "north dakota": "ND", "ohio": "OH", "oklahoma": "OK", "oregon": "OR",
+    "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT",
+    "vermont": "VT", "virginia": "VA", "washington": "WA",
+    "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY",
+    "district of columbia": "DC", "washington dc": "DC", "washington d.c.": "DC",
+}
 
 # CollectAPI state codes for regional mapping
 US_STATES_BY_REGION = {
@@ -88,12 +116,14 @@ US_STATES_BY_REGION = {
 }
 
 # Key weather cities for refinery/demand disruption signals
+# FIX (Audit 2026-08): weather/getWeather takes a plain city name in
+# data.city (e.g. "houston"), not "City,State".
 WEATHER_CITIES = {
-    "houston_tx":    "Houston,Texas",
-    "new_orleans_la": "New Orleans,Louisiana",
-    "los_angeles_ca": "Los Angeles,California",
-    "new_york_ny":   "New York,New York",
-    "chicago_il":    "Chicago,Illinois",
+    "houston_tx":     "houston",
+    "new_orleans_la": "new orleans",
+    "los_angeles_ca": "los angeles",
+    "new_york_ny":    "new york",
+    "chicago_il":     "chicago",
 }
 
 
@@ -128,6 +158,7 @@ class GasCollectAPIClient:
     def __init__(self, api_key: Optional[str] = None, cfg: Part0bConfig = Part0bConfig()):
         self.key = api_key or os.environ.get("COLLECTAPI_KEY", "").strip()
         self.cfg = cfg
+        self._price_cache: Optional[Dict] = None
         if not self.key:
             print("[Part0b] WARN: COLLECTAPI_KEY not set. "
                   "Get a free key at https://collectapi.com and set "
@@ -167,60 +198,68 @@ class GasCollectAPIClient:
     # ------------------------------------------------------------------
     # Gas price fetch
     # ------------------------------------------------------------------
-    def fetch_gas_prices(self, state: str = "ALL") -> Optional[Dict]:
+    def fetch_gas_prices(self) -> Optional[Dict]:
         """
-        Fetch current gas prices.
-        state="ALL" returns national average + all state data.
-        Returns raw API response dict or None on failure.
-        """
-        params = {"state": state} if state != "ALL" else {}
-        return self._get(GAS_PRICE_ENDPOINT, params=params)
+        Fetch current gas prices for all U.S. states (one API call).
 
-    def get_us_avg_price(self) -> Optional[float]:
-        """Return the current U.S. national average regular gas price ($/gal)."""
-        data = self.fetch_gas_prices()
-        if data is None:
-            return None
+        FIX (Audit 2026-08): the result is cached on the client so that
+        get_us_avg_price() and get_regional_prices() share a SINGLE request.
+        The previous version issued one call per method — doubling usage of
+        the free-tier CollectAPI quota for no benefit.
+        """
+        if getattr(self, "_price_cache", None) is not None:
+            return self._price_cache
+        self._price_cache = self._get(GAS_PRICE_ENDPOINT)
+        return self._price_cache
+
+    @staticmethod
+    def _parse_price(raw: object) -> Optional[float]:
+        """Parse a CollectAPI price string like '$3.744' / '3,744' safely."""
         try:
-            results = data.get("result", [])
-            # CollectAPI returns list; find the national/average entry
-            for item in results:
-                name = str(item.get("name", "")).lower()
-                if "average" in name or "national" in name or "regular" in name:
-                    return float(str(item.get("gasoline", "0")).replace("$", ""))
-            # Fallback: average all regular prices
-            prices = []
-            for item in results:
-                try:
-                    prices.append(float(str(item.get("gasoline", "")).replace("$", "")))
-                except (ValueError, TypeError):
-                    pass
-            return float(np.mean(prices)) if prices else None
-        except Exception as e:
-            print(f"[Part0b] Price parse error: {e}")
+            s = str(raw).replace("$", "").replace(",", ".").strip()
+            v = float(s)
+            # Sanity band for U.S. retail regular gasoline ($/gal)
+            return v if 0.5 <= v <= 10.0 else None
+        except (ValueError, TypeError):
             return None
 
-    def get_regional_prices(self) -> Dict[str, float]:
-        """
-        Return average gas prices by region (east_coast, midwest, gulf_coast,
-        west_coast, rocky_mtn). Averages state prices within each region.
-        """
+    def _state_price_map(self) -> Dict[str, float]:
+        """Build 2-letter state code -> regular gasoline price from allUsaPrice."""
         data = self.fetch_gas_prices()
         if data is None:
             return {}
-
-        # Build state -> price lookup
-        results = data.get("result", [])
         state_prices: Dict[str, float] = {}
-        for item in results:
-            state = str(item.get("state", "")).upper().strip()
-            if not state or len(state) != 2:
+        for item in data.get("result", []) or []:
+            name = str(item.get("name", "")).strip().lower()
+            code = US_STATE_NAME_TO_CODE.get(name)
+            if code is None:
+                # Some responses already use codes in a "state" field
+                maybe = str(item.get("state", "")).upper().strip()
+                code = maybe if len(maybe) == 2 else None
+            if code is None:
                 continue
-            try:
-                price = float(str(item.get("gasoline", "")).replace("$", ""))
-                state_prices[state] = price
-            except (ValueError, TypeError):
-                pass
+            price = self._parse_price(item.get("gasoline"))
+            if price is not None:
+                state_prices[code] = price
+        return state_prices
+
+    def get_us_avg_price(self) -> Optional[float]:
+        """Current U.S. national average regular gas price ($/gal) —
+        unweighted mean across states (CollectAPI has no national row)."""
+        state_prices = self._state_price_map()
+        if not state_prices:
+            return None
+        return float(np.mean(list(state_prices.values())))
+
+    def get_regional_prices(self) -> Dict[str, float]:
+        """
+        Average gas prices by region (east_coast, midwest, gulf_coast,
+        west_coast, rocky_mtn). Averages state prices within each region.
+        Reuses the cached allUsaPrice response — no extra API call.
+        """
+        state_prices = self._state_price_map()
+        if not state_prices:
+            return {}
 
         regional: Dict[str, float] = {}
         for region, states in US_STATES_BY_REGION.items():
@@ -228,49 +267,47 @@ class GasCollectAPIClient:
             if prices:
                 regional[f"gas_{region}"] = float(np.mean(prices))
 
-        if state_prices:
-            regional["gas_us_live"] = float(np.mean(list(state_prices.values())))
-
+        regional["gas_us_live"] = float(np.mean(list(state_prices.values())))
         return regional
 
     # ------------------------------------------------------------------
     # Weather fetch
     # ------------------------------------------------------------------
     def fetch_weather(self, city: str) -> Optional[Dict]:
-        params = {"city": city}
+        params = {"data.lang": "en", "data.city": city}
         return self._get(WEATHER_ENDPOINT, params=params)
 
     def get_weather_severity_index(self) -> Dict[str, float]:
         """
         Compute a crude weather severity index for key refinery cities.
-        High severity = cold snap or storm conditions -> supply disruption risk.
-        Returns dict of weather metrics.
+        High severity = cold snap or heat wave -> supply/demand disruption risk.
+
+        FIX (Audit 2026-08): the previous parser assumed an OpenWeather-style
+        payload (result.list[].main.temp in Kelvin, wind.speed in m/s).
+        CollectAPI's weather/getWeather returns a flat daily list with a
+        "degree" field in CELSIUS and no wind data. Parsed accordingly; the
+        wind component of the index is dropped.
         """
         if not self.cfg.weather_enabled:
             return {}
 
         temps: List[float] = []
-        wind_speeds: List[float] = []
 
         for city_key, city_str in WEATHER_CITIES.items():
             data = self.fetch_weather(city_str)
             if data is None:
                 continue
             try:
-                result = data.get("result", {})
-                # CollectAPI weather returns 'list' of hourly forecasts
-                forecasts = result.get("list", [])
+                forecasts = data.get("result", []) or []
                 if not forecasts:
                     continue
-                # Use first (current) forecast
+                # First entry = today's forecast; "degree" is °C
                 fc = forecasts[0]
-                main = fc.get("main", {})
-                wind = fc.get("wind", {})
-                temp_k = float(main.get("temp", 273.15))
-                temp_f = (temp_k - 273.15) * 9 / 5 + 32
-                wind_mph = float(wind.get("speed", 0)) * 2.237
+                temp_c = float(fc.get("degree", np.nan))
+                if not np.isfinite(temp_c):
+                    continue
+                temp_f = temp_c * 9 / 5 + 32
                 temps.append(temp_f)
-                wind_speeds.append(wind_mph)
             except Exception as e:
                 print(f"[Part0b] Weather parse error for {city_key}: {e}")
                 continue
@@ -279,14 +316,12 @@ class GasCollectAPIClient:
         if temps:
             avg_temp = float(np.mean(temps))
             result_dict["weather_avg_temp_f"] = avg_temp
-            # Severity index: cold snaps (< 20F) or heat waves (> 105F) score high
+            # Severity index: cold snaps (< 32F) or heat waves (> 90F) score high
             cold_severity = max(0.0, (32.0 - avg_temp) / 32.0)
             heat_severity = max(0.0, (avg_temp - 90.0) / 30.0)
             result_dict["weather_severity_index"] = float(
                 min(1.0, cold_severity + heat_severity)
             )
-        if wind_speeds:
-            result_dict["weather_avg_wind_mph"] = float(np.mean(wind_speeds))
 
         return result_dict
 
@@ -308,8 +343,19 @@ def stamp_live_observation(
     us_avg: Optional[float],
 ) -> pd.DataFrame:
     """
-    Stamp the latest CollectAPI live observations into the most-recent
-    or a new row of the master DataFrame.
+    Stamp the latest CollectAPI live observations onto the current week's
+    EXISTING row of the master DataFrame.
+
+    FIX (Audit 2026-08): the previous version APPENDED a brand-new row for
+    the current Monday when it was absent from the master (i.e. whenever
+    FRED had not yet propagated that morning's EIA release). That appended
+    row had no gas_us_avg, so Part 1 flagged it as a second live anchor and
+    the whole stack forecast off a week whose own price — the single most
+    informative feature — was missing. Update-only keeps exactly one
+    well-defined live anchor: the latest EIA-priced week. When the current
+    Monday's row does not exist yet, the live extras are simply skipped for
+    this run (they are supplementary signals, not pipeline inputs the
+    feature contract depends on).
     """
     today = pd.Timestamp.today().normalize()
     # Round to current or previous Monday
@@ -328,17 +374,18 @@ def stamp_live_observation(
         live_data["gas_us_live"] = us_avg
 
     if existing.empty:
-        # Append new live row
-        live_row = pd.DataFrame([live_data])
-        df = pd.concat([df, live_row], ignore_index=True)
-        print(f"[Part0b] Appended live row for {current_monday.date()}")
-    else:
-        # Update existing row with live data
-        idx = existing.index[0]
-        for col, val in live_data.items():
-            if col != "week_date":
-                df.at[idx, col] = val
-        print(f"[Part0b] Updated live row for {current_monday.date()}")
+        print(f"[Part0b] Current Monday ({current_monday.date()}) not yet in "
+              "master (FRED lag?) — live data NOT stamped this run. "
+              "Update-only by design; see Audit 2026-08 note.")
+        return df
+
+    idx = existing.index[0]
+    for col, val in live_data.items():
+        if col != "week_date":
+            if col not in df.columns:
+                df[col] = np.nan
+            df.at[idx, col] = val
+    print(f"[Part0b] Updated live row for {current_monday.date()}")
 
     return df.sort_values("week_date").reset_index(drop=True)
 
