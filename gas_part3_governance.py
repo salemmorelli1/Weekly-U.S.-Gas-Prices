@@ -232,6 +232,12 @@ def fuse_forecasts(
     result = base[["week_date"]].copy()
     if "actual" in base.columns:
         result["actual"] = base["actual"].values
+    # Live-row contract (Audit 2026-08): carry the live flag through so the
+    # prediction log knows whether the latest row is a genuine forward forecast.
+    if "is_live" in base.columns:
+        result["is_live"] = base["is_live"].values
+    else:
+        result["is_live"] = 0
 
     # Add per-sleeve predictions
     for sleeve in active_sleeves:
@@ -247,20 +253,30 @@ def fuse_forecasts(
         )
         result[f"pred_{sleeve}"] = merged[f"pred_{sleeve}"].values
 
-    # Compute fusion forecast
-    fusion = np.zeros(len(result))
-    weight_sum = 0.0
-    for sleeve, w in weights.items():
-        col = f"pred_{sleeve}"
-        if col in result.columns:
-            vals = result[col].fillna(0).values
-            fusion += w * vals
-            weight_sum += w
+    # Compute fusion forecast.
+    # FIX (Audit 2026-08): the previous version used fillna(0) with a GLOBAL
+    # weight sum. Any week where a sleeve had no prediction (e.g. the LSTM
+    # tape starts seq_len weeks later than the sklearn tape) was dragged
+    # toward $0/gal by the missing sleeve's zero. Weights now renormalize
+    # PER ROW over the sleeves that actually have a finite prediction.
+    sleeve_names = list(weights.keys())
+    pred_matrix = np.column_stack([
+        result[f"pred_{s}"].values if f"pred_{s}" in result.columns
+        else np.full(len(result), np.nan)
+        for s in sleeve_names
+    ]) if sleeve_names else np.full((len(result), 1), np.nan)
+    w_vec = np.array([weights[s] for s in sleeve_names]) if sleeve_names else np.array([0.0])
 
-    if weight_sum > 0:
-        result["pred_fusion"] = fusion / weight_sum
-    else:
-        result["pred_fusion"] = np.nan
+    finite = np.isfinite(pred_matrix)
+    w_row = finite * w_vec[None, :]
+    w_sum = w_row.sum(axis=1)
+    fused = np.where(
+        w_sum > 0,
+        np.nansum(np.where(finite, pred_matrix, 0.0) * w_row, axis=1)
+        / np.where(w_sum > 0, w_sum, 1.0),
+        np.nan,
+    )
+    result["pred_fusion"] = fused
 
     return result
 
@@ -312,6 +328,7 @@ PREDLOG_COLUMNS = [
     "decision_date",
     "target_date",
     "week_date",
+    "is_live_forecast",
     "pred_fusion",
     "pred_part2",
     "pred_part2b",
@@ -341,14 +358,30 @@ def build_prediction_log_row(
         return pd.Series()
 
     row = fusion_df.iloc[-1]
+
+    # FIX (Audit 2026-08, date semantics): decision_date and target_date were
+    # previously derived from TODAY'S calendar ("current Monday" / "next
+    # Monday"), independent of what the model actually forecast. If the data
+    # lagged by a week — or the pipeline ran on a Wednesday with --force —
+    # the logged target_date no longer matched the week the fusion forecast
+    # was predicting, and the backfill would score the forecast against the
+    # wrong EIA release. Dates are now DATA-DERIVED:
+    #   week_date    = the anchor week of the forecast row (EIA week W)
+    #   target_date  = week_date + 7 days (the EIA release being predicted)
+    #   decision_date = the run date (audit trail only, never a join key)
+    anchor_week = pd.to_datetime(row.get("week_date"))
+    target_date = anchor_week + pd.Timedelta(days=7)
     today = pd.Timestamp.today().normalize()
-    current_monday = today - pd.Timedelta(days=today.weekday())
-    next_monday    = current_monday + pd.Timedelta(weeks=1)
+    is_live_row = int(row.get("is_live", 0)) if not pd.isna(row.get("is_live", 0)) else 0
+    if not is_live_row:
+        print("[Part3] WARN: Latest fusion row is NOT a live row — the logged "
+              "forecast is retrospective (its target week is already realized).")
 
     log_row = {
-        "decision_date":   current_monday.strftime("%Y-%m-%d"),
-        "target_date":     next_monday.strftime("%Y-%m-%d"),
-        "week_date":       str(row.get("week_date", current_monday))[:10],
+        "decision_date":   today.strftime("%Y-%m-%d"),
+        "target_date":     target_date.strftime("%Y-%m-%d"),
+        "week_date":       anchor_week.strftime("%Y-%m-%d"),
+        "is_live_forecast": is_live_row,
         "pred_fusion":     round(float(row.get("pred_fusion", np.nan)), 4),
         "pred_part2":      round(float(row.get("pred_part2", np.nan)), 4),
         "pred_part2b":     round(float(row.get("pred_part2b", np.nan)), 4),
@@ -368,36 +401,74 @@ def build_prediction_log_row(
     return pd.Series(log_row)
 
 
+REALIZED_COLUMNS = ("actual", "actual_date", "mae", "rmse", "mape", "direction_correct")
+
+
 def upsert_prediction_log(
     predlog_path: Path,
     new_row: pd.Series,
 ) -> pd.DataFrame:
     """
     Append or update the prediction log with the new row.
-    Keyed by decision_date — idempotent re-runs overwrite same date.
+
+    FIX (Audit 2026-08):
+      - Keyed by target_date, not decision_date. The forecast IS the
+        target-week price; decision_date is only the run timestamp, and a
+        re-run on a different day must still upsert the same forecast row.
+      - Realized fields written by the backfill (actual, mae, ...) are
+        PRESERVED when a row is re-upserted: the fresh Part 3 row carries
+        NaN for those fields, and overwriting a realized value with NaN
+        would silently destroy backfilled history.
+      - Missing schema columns are added to older logs (forward-compatible
+        with the V1 schema migration pattern from the reference project).
     """
     if predlog_path.exists():
         df = pd.read_csv(predlog_path)
+        for col in PREDLOG_COLUMNS:
+            if col not in df.columns:
+                df[col] = np.nan
     else:
         df = pd.DataFrame(columns=PREDLOG_COLUMNS)
 
-    decision_date = new_row.get("decision_date", "")
-    if decision_date and decision_date in df.get("decision_date", pd.Series()).values:
-        idx = df[df["decision_date"] == decision_date].index[0]
+    target_date = str(new_row.get("target_date", "")).strip()
+    existing = df.index[df.get("target_date", pd.Series(dtype=str)).astype(str) == target_date]
+
+    if target_date and len(existing):
+        idx = existing[0]
         for col, val in new_row.items():
-            if col in df.columns:
-                df.at[idx, col] = val
-        print(f"[Part3] Updated existing prediction log row: {decision_date}")
+            if col not in df.columns:
+                continue
+            # Normalize empty-string placeholders to NaN so they hit the
+            # realized-preserve rule and never poison numeric columns.
+            if isinstance(val, str) and val.strip() == "":
+                val = np.nan
+            is_missing = val is None or (isinstance(val, float) and np.isnan(val))
+            if col in REALIZED_COLUMNS:
+                # Never clobber a realized value with a fresh NaN
+                current = df.at[idx, col]
+                if pd.notna(current) and is_missing:
+                    continue
+            # FIX (Audit 2026-08): pandas 2.x raises on assigning a string
+            # into an all-NaN float64 column (e.g. confidence/regime read
+            # back from CSV as float64 when previously empty). Upcast to
+            # object before writing incompatible values.
+            if (isinstance(val, str)
+                    and df[col].dtype != object):
+                df[col] = df[col].astype(object)
+            df.at[idx, col] = val
+        print(f"[Part3] Updated existing prediction log row (target {target_date})")
     else:
         new_df = pd.DataFrame([new_row])
-        # Align columns
         for col in PREDLOG_COLUMNS:
             if col not in new_df.columns:
                 new_df[col] = np.nan
         new_df = new_df[[c for c in PREDLOG_COLUMNS if c in new_df.columns]]
         df = pd.concat([df, new_df], ignore_index=True)
-        print(f"[Part3] Appended new prediction log row: {decision_date}")
+        print(f"[Part3] Appended new prediction log row (target {target_date})")
 
+    # Keep the log ordered by target_date
+    df["_sort"] = pd.to_datetime(df["target_date"], errors="coerce")
+    df = df.sort_values("_sort").drop(columns=["_sort"]).reset_index(drop=True)
     return df
 
 
@@ -416,11 +487,14 @@ def write_part3_summary(
         "active_sleeves": active_sleeves,
         "fusion_weights": {k: round(v, 4) for k, v in weights.items()},
         "latest_prediction": {
-            "decision_date":   str(new_row.get("decision_date", "")),
-            "target_date":     str(new_row.get("target_date", "")),
-            "pred_fusion":     float(new_row.get("pred_fusion", np.nan)),
-            "confidence":      str(new_row.get("confidence", "")),
-            "regime":          str(new_row.get("regime_label", "")),
+            "decision_date":     str(new_row.get("decision_date", "")),
+            "target_date":       str(new_row.get("target_date", "")),
+            "anchor_week":       str(new_row.get("week_date", "")),
+            "is_live_forecast":  int(new_row.get("is_live_forecast", 0) or 0),
+            "pred_fusion":       (float(new_row.get("pred_fusion"))
+                                  if pd.notna(new_row.get("pred_fusion", np.nan)) else None),
+            "confidence":        str(new_row.get("confidence", "")),
+            "regime":            str(new_row.get("regime_label", "")),
         },
         "prediction_log_rows": predlog_len,
     }
@@ -472,20 +546,30 @@ def main() -> int:
     # Latest week forecast
     latest = fusion_df.iloc[-1]
     latest_week = pd.to_datetime(latest["week_date"])
-    print(f"\n[Part3] Latest forecast (week of {latest_week.date()}):")
-    print(f"  Fusion:     ${latest.get('pred_fusion', float('nan')):.3f}/gal")
+    target_week = latest_week + pd.Timedelta(days=7)
+    fusion_val = latest.get("pred_fusion", float("nan"))
+    fusion_str = f"${fusion_val:.3f}/gal" if np.isfinite(fusion_val) else "N/A"
+    print(f"\n[Part3] Latest forecast — anchor week {latest_week.date()}, "
+          f"target week {target_week.date()}:")
+    print(f"  Fusion:     {fusion_str}")
     print(f"  Confidence: {latest.get('confidence', 'N/A')}")
     print(f"  Regime:     {latest.get('regime_label', 'N/A')}")
     for sleeve in active_sleeves:
         col = f"pred_{sleeve}"
-        if col in latest.index and not np.isnan(latest.get(col, float('nan'))):
-            print(f"  {sleeve}: ${latest.get(col):.3f}/gal")
+        v = latest.get(col, float("nan"))
+        if col in latest.index and np.isfinite(v):
+            print(f"  {sleeve}: ${v:.3f}/gal")
 
-    # Build and write prediction log row
+    # Build and write prediction log row — atomically (tmp + rename), with a
+    # round-trip verification, matching the backfill's write discipline.
     new_row = build_prediction_log_row(fusion_df, cfg)
     predlog_path = out_dir / "prediction_log.csv"
     df_log = upsert_prediction_log(predlog_path, new_row)
-    df_log.to_csv(predlog_path, index=False)
+    tmp_path = predlog_path.with_suffix(".csv.tmp")
+    df_log.to_csv(tmp_path, index=False)
+    tmp_path.replace(predlog_path)
+    verify = pd.read_csv(predlog_path)
+    assert len(verify) == len(df_log), "Prediction log row count mismatch after write"
     print(f"[Part3] Prediction log -> {predlog_path} ({len(df_log)} rows)")
 
     write_part3_summary(out_dir, new_row, weights, active_sleeves, len(df_log))
