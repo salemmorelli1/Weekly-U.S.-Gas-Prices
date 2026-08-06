@@ -357,11 +357,16 @@ def main() -> int:
     # Train model
     model, used_hmm = train_hmm(X, cfg)
 
-    # Predict
+    # Predict on training rows (fully-observed features)
     int_labels, probs = predict_regimes(model, X, used_hmm)
 
     # Semantic labeling
     named_labels = label_regimes(int_labels, probs, cfg, feat_df[selected], selected)
+
+    # Build regime index -> semantic name map (string keys — see meta note)
+    idx_to_name: Dict[int, str] = {}
+    for il, nl in zip(int_labels, named_labels):
+        idx_to_name[int(il)] = str(nl)
 
     # Build output tape
     tape = feat_df[["week_date"]].copy()
@@ -372,6 +377,35 @@ def main() -> int:
 
     # Merge back to full index via left join
     full_tape = df[["week_date"]].merge(tape, on="week_date", how="left")
+
+    # FIX (Audit 2026-08, mirrors PriceCall Part-6 Finding 4):
+    # Rows with ANY NaN feature — which always includes the most recent live
+    # week, whose EIA fundamentals lag by a release cycle — were left as
+    # regime UNKNOWN. Part 3's confidence logic then never saw the current
+    # regime for the one week that matters most: the live forecast. Predict
+    # those rows too, using forward/backward-filled features so predict-time
+    # inputs come from the same distribution the scaler/HMM were fit on.
+    missing_mask = full_tape["regime_label"].isna()
+    if missing_mask.any():
+        fill_feats = (
+            df[selected]
+            .ffill()
+            .bfill()
+        )
+        fill_rows = fill_feats.loc[missing_mask.values]
+        if not fill_rows.isna().any().any():
+            X_fill = scaler.transform(fill_rows.values)
+            fill_int, fill_probs = predict_regimes(model, X_fill, used_hmm)
+            fill_named = np.array([idx_to_name.get(int(l), "UNKNOWN") for l in fill_int])
+            full_tape.loc[missing_mask, "regime_int"]   = fill_int
+            full_tape.loc[missing_mask, "regime_label"] = fill_named
+            for i in range(cfg.n_regimes):
+                full_tape.loc[missing_mask, f"regime_prob_{i}"] = fill_probs[:, i]
+            print(f"[Part6] Filled {int(missing_mask.sum())} NaN-feature rows "
+                  "(incl. live week) via ffill/bfill predict")
+        else:
+            print("[Part6] WARN: Could not fill NaN-feature rows — "
+                  "features unavailable even after ffill/bfill.")
     full_tape["regime_label"] = full_tape["regime_label"].fillna("UNKNOWN")
 
     # Write tape
@@ -384,7 +418,8 @@ def main() -> int:
     model_path = out_dir / "gas_regime_model.pkl"
     with open(model_path, "wb") as f:
         pickle.dump({"model": model, "scaler": scaler, "used_hmm": used_hmm,
-                     "selected_features": selected}, f)
+                     "selected_features": selected,
+                     "regime_map": {str(k): v for k, v in idx_to_name.items()}}, f)
     print(f"[Part6] Model -> {model_path}")
 
     # Regime distribution
@@ -392,11 +427,16 @@ def main() -> int:
     print(f"[Part6] Regime distribution: {dist}")
 
     # Meta
+    # NOTE (mirrors PriceCall Part-6 Finding 7): regime_map keys are
+    # explicitly converted to STRINGS before json.dump. json silently
+    # coerces int keys to strings anyway; making the contract explicit
+    # prevents downstream consumers from key-type mismatches on reload.
     meta = {
         "script_version": SCRIPT_VERSION,
         "run_utc": datetime.now(timezone.utc).isoformat(),
         "model_type": "HMM" if used_hmm else "GMM",
         "n_regimes": cfg.n_regimes,
+        "regime_map": {str(k): v for k, v in idx_to_name.items()},
         "selected_features": selected,
         "n_train_rows": len(feat_df),
         "regime_distribution": {k: int(v) for k, v in dist.items()},
