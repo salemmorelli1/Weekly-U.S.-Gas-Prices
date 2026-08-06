@@ -30,6 +30,10 @@ pyarrow>=14.0
 plotly>=5.18
 
 # ── Deep learning (LSTM sleeve — gas_part2a) ───────────────────────────────────
-# Uncomment when activating the LSTM sleeve (gas_part2a_lstm_sleeve.py).
-# Only activate after gas_part2b summary confirms xgb_sleeve_recommended: true.
+# Uncomment to install PyTorch and enable the LSTM sleeve. Safe to install
+# eagerly: unlike the reference project's original design, the activation
+# gate is enforced IN CODE — gas_part2a_lstm_sleeve.py reads
+# gas_part2b_summary.json every run and skips itself unless
+# xgb_sleeve_recommended is true (fail-closed on any read error;
+# override with GASPRICE_FORCE_LSTM=1). CPU-only build is sufficient.
 # torch>=2.0
