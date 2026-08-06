@@ -3,15 +3,15 @@
 > **Weekly U.S. average regular gas price forecasting model.**
 > Ensemble of sklearn, XGBoost, and LSTM sleeves fused via inverse-RMSE weighting.
 > Data: EIA, FRED, CollectAPI live prices, yfinance commodities.
-> Runs automatically every Monday after the EIA weekly release (~10 AM ET).
+> Runs automatically every Monday at 10:35 AM ET, after the EIA weekly release.
 
-[![Weekly Forecast](https://github.com/YOUR_USERNAME/GasPriceForecast/actions/workflows/weekly_forecast.yml/badge.svg)](https://github.com/YOUR_USERNAME/GasPriceForecast/actions/workflows/weekly_forecast.yml)
+[![Weekly Forecast](https://github.com/salemmorelli1/GasPriceForecast/actions/workflows/weekly-production.yml/badge.svg)](https://github.com/salemmorelli1/GasPriceForecast/actions/workflows/weekly-production.yml)
 
 ---
 
 ## 📊 Live Dashboard
 
-[**→ View Dashboard**](https://YOUR_USERNAME.github.io/GasPriceForecast/)
+[**→ View Dashboard**](https://salemmorelli1.github.io/GasPriceForecast/)
 
 The dashboard shows:
 - This week's fusion forecast vs. EIA realized prices
@@ -47,14 +47,24 @@ gas_part9   ─── Live attribution: MAE/MAPE/DM test/drift detection
 
 **Cadence:** Weekly, Monday. EIA releases weekly gas price data Monday mornings.
 
+**Live-row contract:** Part 1 keeps the most recent week (whose next-week target
+is not yet realized) as a flagged `is_live` row. Every sleeve trains on labeled
+rows only and predicts the live row — so the logged forecast genuinely targets
+`target_date = anchor week + 7 days`, the next EIA release. The prediction log
+is keyed by `target_date` and each row carries `is_live_forecast` so
+retrospective (--force off-cycle) runs are distinguishable from real forecasts.
+
+**Common gate window:** all three sleeves score on the same trailing 52 labeled
+weeks, so the inverse-RMSE fusion gates in Part 3 compare like with like.
+
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Clone
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/GasPriceForecast.git
+git clone https://github.com/salemmorelli1/GasPriceForecast.git
 cd GasPriceForecast
 ```
 
@@ -64,8 +74,10 @@ cd GasPriceForecast
 pip install -r requirements.txt
 ```
 
-> **LSTM sleeve** requires PyTorch. Uncomment `torch` in `requirements.txt` to enable,
-> but only after `gas_part2b_summary.json` confirms `xgb_sleeve_recommended: true`.
+> **LSTM sleeve** requires PyTorch. Uncomment `torch` in `requirements.txt` to enable.
+> The activation gate is enforced **in code**: `gas_part2a_lstm_sleeve.py` reads
+> `gas_part2b_summary.json` each run and skips itself unless
+> `xgb_sleeve_recommended: true` (override with `GASPRICE_FORCE_LSTM=1`).
 
 ### 3. Set API keys
 
@@ -100,7 +112,7 @@ python gas_run_weekly_prediction.py --force --with-backfill
 
 ---
 
-## 📁 Pipeline Files
+## Pipeline Files
 
 | File | Description |
 |------|-------------|
@@ -119,10 +131,11 @@ python gas_run_weekly_prediction.py --force --with-backfill
 
 ---
 
-## 📦 Artifacts
+## Artifacts
 
-All artifacts are written to subdirectories and **not committed to git** (see `.gitignore`).
-Summary JSONs and the prediction log are copied to `docs/` by the GitHub Actions workflow.
+All artifacts are written to subdirectories and ignored by `.gitignore`; the GitHub
+Actions workflows commit the accumulating subset with `git add -f` and stage the
+dashboard's JSON/CSV copies into `data/`.
 
 | Artifact | Path |
 |----------|------|
@@ -136,9 +149,15 @@ Summary JSONs and the prediction log are copied to `docs/` by the GitHub Actions
 
 ---
 
-## ⚙️ GitHub Actions Setup
+## GitHub Actions Setup
 
-The workflow (`.github/workflows/weekly_forecast.yml`) runs every Monday at 14:00 UTC.
+Two production workflows (dual-UTC-cron pattern — GitHub ignores `timezone:` keys):
+
+| Workflow | Schedule | Purpose |
+|----------|----------|---------|
+| `weekly-production.yml` | Mondays 10:35 AM ET (14:35 & 15:35 UTC + time gate) | Full forecast pipeline; commits artifacts; triggers Pages |
+| `weekly-backfill.yml` | Wednesdays 8:00 AM ET (12:00 & 13:00 UTC + time gate) | Backfills realized EIA prices; re-runs Part 9; commits with `[skip ci]` |
+| `pages.yml` | On production commit / manual | Deploys the dashboard with the committed data files |
 
 ### Required secrets (Settings → Secrets → Actions)
 
@@ -151,15 +170,17 @@ The workflow (`.github/workflows/weekly_forecast.yml`) runs every Monday at 14:0
 ### Enable GitHub Pages
 
 1. Go to **Settings → Pages**
-2. Set Source to **Deploy from a branch**
-3. Select branch `main`, folder `/docs`
-4. Your dashboard will be live at `https://YOUR_USERNAME.github.io/GasPriceForecast/`
+2. Set Source to **GitHub Actions** (the `pages.yml` workflow deploys the site;
+   `configure-pages` with `enablement: true` will also self-enable on first run)
+3. Your dashboard will be live at `https://YOUR_USERNAME.github.io/GasPriceForecast/`
 
-The workflow automatically copies `prediction_log.csv` and JSON summaries to `docs/` on each run.
+The production workflow stages `prediction_log.csv` and the summary JSONs into
+`data/` on each run; `pages.yml` copies them flat into the site root, which is
+where `index.html` fetches them from.
 
 ---
 
-## 🔮 Model Details
+## Model Details
 
 ### Feature Families
 
@@ -177,8 +198,12 @@ The workflow automatically copies `prediction_log.csv` and JSON summaries to `do
 
 ### Sleeve Gates
 
+All gate RMSEs are computed on the **common gate window** (last 52 labeled weeks)
+and **fail closed** — a missing baseline means the gate does not pass.
+
 The LSTM sleeve activates only when **both** gates pass:
-1. `xgb_sleeve_recommended = true` (XGB RMSE < sklearn RMSE)
+1. `xgb_sleeve_recommended = true` (XGB RMSE < sklearn ensemble RMSE) —
+   enforced at runtime by `gas_part2a_lstm_sleeve.py` itself
 2. `lstm_sleeve_recommended = true` (LSTM RMSE < both sklearn and XGB)
 
 ### Confidence Flags
@@ -197,7 +222,7 @@ The LSTM sleeve activates only when **both** gates pass:
 
 ---
 
-## 📊 Google Colab Usage
+## Google Colab Usage
 
 All parts support Google Colab + Drive. Set `GASPRICE_ROOT` to your Drive path:
 
@@ -216,10 +241,10 @@ os.environ["COLLECTAPI_KEY"] = "your_key"
 
 ---
 
-## 📈 Backfilling Realized Prices
+## Backfilling Realized Prices
 
-EIA releases weekly gas prices every Monday morning. Run the backfill script
-weekly (or let the GitHub Actions workflow do it via `--with-backfill`):
+EIA releases weekly gas prices every Monday morning. The `weekly-backfill.yml`
+workflow runs each Wednesday (2 days of publication buffer); locally:
 
 ```bash
 python gas_backfill_realized.py
@@ -230,12 +255,14 @@ python gas_backfill_realized.py --dry-run
 
 The backfill script:
 1. Fetches EIA `GASREGCOVW` weekly price history via FRED (or EIA API as fallback)
-2. Matches each `target_date` in the prediction log to the EIA release
-3. Computes MAE, MAPE, and direction accuracy for each matured row
+2. Matches each `target_date` in the prediction log to the EIA release (±3 days)
+3. Computes MAE, MAPE, and direction accuracy (vs the prior week's realized
+   EIA price) for each matured row
+4. Is idempotent — already-realized rows are skipped unless `--force` is passed
 
 ---
 
-## 🧪 Validation
+## Validation
 
 After accumulating at least 8 weeks of realized predictions, `gas_part9` will compute:
 
@@ -254,7 +281,7 @@ Health thresholds:
 
 ---
 
-## 🔑 Environment Variables
+## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -265,11 +292,3 @@ Health thresholds:
 
 ---
 
-## 📜 License
-
-MIT — see LICENSE for details.
-
----
-
-*Built following the same architecture as [PriceCallProject](https://github.com/YOUR_USERNAME/PriceCallProject)
-but targeting gas price regression rather than equity tail risk classification.*
