@@ -138,53 +138,60 @@ def resolve_project_root(cfg: Part2aConfig) -> Path:
 
 
 # ── LSTM Model ─────────────────────────────────────────────────────────────────
+# FIX (Audit 2026-08): GasPriceLSTM subclassed nn.Module at MODULE level, so
+# when torch was absent the file crashed at import time with
+# "AttributeError: 'NoneType' object has no attribute 'Module'" — before
+# main()'s HAVE_TORCH graceful-skip could ever run. The torch-dependent
+# definitions are now guarded so the sleeve degrades gracefully as designed.
 
-class GasPriceLSTM(nn.Module):
-    """
-    Two-layer LSTM for weekly gas price forecasting.
-    Input shape: (batch, seq_len, n_features)
-    Output shape: (batch, 1) — next week's price
-    """
+if HAVE_TORCH:
 
-    def __init__(
-        self,
-        n_features: int,
-        hidden_size_1: int = 128,
-        hidden_size_2: int = 64,
-        dense_size: int = 32,
-        dropout: float = 0.20,
-    ):
-        super().__init__()
-        self.lstm1 = nn.LSTM(
-            input_size=n_features,
-            hidden_size=hidden_size_1,
-            num_layers=1,
-            batch_first=True,
-            dropout=0.0,
-        )
-        self.dropout1 = nn.Dropout(dropout)
-        self.lstm2 = nn.LSTM(
-            input_size=hidden_size_1,
-            hidden_size=hidden_size_2,
-            num_layers=1,
-            batch_first=True,
-            dropout=0.0,
-        )
-        self.dropout2 = nn.Dropout(dropout)
-        self.fc1 = nn.Linear(hidden_size_2, dense_size)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(dense_size, 1)
+  class GasPriceLSTM(nn.Module):
+      """
+      Two-layer LSTM for weekly gas price forecasting.
+      Input shape: (batch, seq_len, n_features)
+      Output shape: (batch, 1) — next week's price
+      """
 
-    def forward(self, x: "torch.Tensor") -> "torch.Tensor":
-        # x: (batch, seq_len, n_features)
-        out1, _ = self.lstm1(x)                   # (batch, seq_len, hidden1)
-        out1    = self.dropout1(out1)
-        out2, _ = self.lstm2(out1)                 # (batch, seq_len, hidden2)
-        out2    = self.dropout2(out2)
-        last    = out2[:, -1, :]                   # use last timestep
-        dense   = self.relu(self.fc1(last))
-        pred    = self.fc2(dense)                  # (batch, 1)
-        return pred.squeeze(-1)
+      def __init__(
+          self,
+          n_features: int,
+          hidden_size_1: int = 128,
+          hidden_size_2: int = 64,
+          dense_size: int = 32,
+          dropout: float = 0.20,
+      ):
+          super().__init__()
+          self.lstm1 = nn.LSTM(
+              input_size=n_features,
+              hidden_size=hidden_size_1,
+              num_layers=1,
+              batch_first=True,
+              dropout=0.0,
+          )
+          self.dropout1 = nn.Dropout(dropout)
+          self.lstm2 = nn.LSTM(
+              input_size=hidden_size_1,
+              hidden_size=hidden_size_2,
+              num_layers=1,
+              batch_first=True,
+              dropout=0.0,
+          )
+          self.dropout2 = nn.Dropout(dropout)
+          self.fc1 = nn.Linear(hidden_size_2, dense_size)
+          self.relu = nn.ReLU()
+          self.fc2 = nn.Linear(dense_size, 1)
+
+      def forward(self, x: "torch.Tensor") -> "torch.Tensor":
+          # x: (batch, seq_len, n_features)
+          out1, _ = self.lstm1(x)                   # (batch, seq_len, hidden1)
+          out1    = self.dropout1(out1)
+          out2, _ = self.lstm2(out1)                 # (batch, seq_len, hidden2)
+          out2    = self.dropout2(out2)
+          last    = out2[:, -1, :]                   # use last timestep
+          dense   = self.relu(self.fc1(last))
+          pred    = self.fc2(dense)                  # (batch, 1)
+          return pred.squeeze(-1)
 
 
 # ── Sequence builder ───────────────────────────────────────────────────────────
@@ -196,15 +203,24 @@ def build_sequences(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Build (X_seq, y_seq) sliding window sequences.
-    X_seq[i] = X_arr[i : i+seq_len]
-    y_seq[i] = y_arr[i + seq_len]
+
+    FIX (Audit 2026-08, horizon alignment): the previous builder used
+    y_seq[i] = y[i + seq_len] with a window ending at row i + seq_len - 1.
+    The anchor row (whose lagged features encode the most recent week) was
+    EXCLUDED from its own window, silently turning the H=1 problem into an
+    effective H=2 forecast. The window now ENDS at the row whose target it
+    predicts:
+        X_seq[i] = X_arr[i : i + seq_len]        (rows i .. i+seq_len-1)
+        y_seq[i] = y_arr[i + seq_len - 1]        (target of the LAST row)
+    This matches the sklearn/XGB sleeves, which predict row t's target from
+    row t's features.
     """
     n = len(y_arr)
     X_seq = []
     y_seq = []
-    for i in range(n - seq_len):
+    for i in range(n - seq_len + 1):
         X_seq.append(X_arr[i : i + seq_len])
-        y_seq.append(y_arr[i + seq_len])
+        y_seq.append(y_arr[i + seq_len - 1])
     return np.array(X_seq, dtype=np.float32), np.array(y_seq, dtype=np.float32)
 
 
@@ -222,8 +238,10 @@ def train_lstm(
     optimizer = torch.optim.Adam(
         model.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay
     )
+    # FIX (Audit 2026-08): `verbose` kwarg removed — deprecated in torch 2.2
+    # and rejected by newer releases.
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, patience=cfg.lr_patience, factor=0.5, verbose=False
+        optimizer, patience=cfg.lr_patience, factor=0.5
     )
     criterion = nn.HuberLoss(delta=0.1)  # robust to outliers
 
@@ -295,7 +313,36 @@ def load_features(part1_dir: Path) -> Tuple[pd.DataFrame, pd.Series]:
     X = pd.read_parquet(matrix_path)
     y_df = pd.read_parquet(target_path)
     X["week_date"] = pd.to_datetime(X["week_date"])
+    if "is_live" not in X.columns:   # live-row contract (Audit 2026-08)
+        X = X.copy()
+        X["is_live"] = 0
     return X, y_df["target_gas_price"]
+
+
+def part2b_gate_passed(part2b_dir: Path) -> Tuple[bool, str]:
+    """
+    FIX (Audit 2026-08, mirrors PriceCall Part-46 audit):
+    The module docstring has always said 'Activate this sleeve only after
+    Part2b's xgb_sleeve_recommended = true' — but nothing ENFORCED it. Once
+    torch was installed, the LSTM ran unconditionally every week regardless
+    of the upstream gate, burning CI wall time on a sleeve its own contract
+    says is not yet justified. This helper reads Part 2b's fresh summary
+    (Part 2b always runs earlier in the pipeline order) and fails CLOSED on
+    any error: missing file, bad JSON, or missing key all mean 'do not run'.
+    Override for experimentation with GASPRICE_FORCE_LSTM=1.
+    """
+    if os.environ.get("GASPRICE_FORCE_LSTM", "").strip() == "1":
+        return True, "GASPRICE_FORCE_LSTM=1 override"
+    summary_path = part2b_dir / "gas_part2b_summary.json"
+    if not summary_path.exists():
+        return False, f"gas_part2b_summary.json not found at {summary_path}"
+    try:
+        with open(summary_path, "r", encoding="utf-8") as f:
+            s = json.load(f)
+    except Exception as exc:
+        return False, f"could not parse {summary_path}: {exc}"
+    rec = bool(s.get("xgb_sleeve_recommended", False))
+    return rec, f"xgb_sleeve_recommended={rec} (source={summary_path})"
 
 
 def load_baseline_rmse(part2_dir: Path, part2b_dir: Path) -> Tuple[Optional[float], Optional[float]]:
@@ -348,6 +395,22 @@ def main() -> int:
             json.dump(summary, f, indent=2)
         return 0
 
+    # ── Part 2b activation gate (fail-closed) ──────────────────────────────
+    gate_ok, gate_reason = part2b_gate_passed(part2b_dir)
+    if not gate_ok:
+        print(f"[Part2a] LSTM sleeve SKIPPED — Part 2b gate not passed ({gate_reason}).")
+        summary = {
+            "script_version": SCRIPT_VERSION,
+            "run_utc": datetime.now(timezone.utc).isoformat(),
+            "lstm_sleeve_recommended": False,
+            "reason": "part2b_gate_not_passed",
+            "gate_detail": gate_reason,
+        }
+        with open(out_dir / "gas_part2a_summary.json", "w") as f:
+            json.dump(summary, f, indent=2)
+        return 0
+    print(f"[Part2a] Part 2b activation gate passed ({gate_reason}).")
+
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
 
@@ -359,35 +422,63 @@ def main() -> int:
         return 1
 
     feature_cols = get_feature_cols(X)
-    n = len(y)
-    print(f"[Part2a] Features: {n} rows x {len(feature_cols)} features")
+    n_total = len(X)
+    is_live = X["is_live"].values.astype(int)
+    n_live  = int(is_live.sum())
+    n_lab   = n_total - n_live
+    print(f"[Part2a] Features: {n_lab} labeled + {n_live} live rows x "
+          f"{len(feature_cols)} features")
 
-    # Preprocess: impute then scale
+    seq_len = cfg.sequence_length
+    val_len = min(cfg.val_weeks, max(1, int(n_lab * 0.25)))
+    train_end_t = n_lab - val_len   # first validation TARGET index
+
+    # FIX (Audit 2026-08): imputer / scaler / target-scaling stats were
+    # previously fit on the FULL matrix (train + val + live), leaking
+    # validation-window information into preprocessing. All stats now come
+    # from training rows only (targets before the common gate window).
     imputer = SimpleImputer(strategy="median")
     scaler  = StandardScaler()
-    X_imp   = imputer.fit_transform(X[feature_cols].values)
-    X_scaled = scaler.fit_transform(X_imp)
+    imputer.fit(X[feature_cols].values[:train_end_t])
+    scaler.fit(imputer.transform(X[feature_cols].values[:train_end_t]))
+    X_scaled = scaler.transform(imputer.transform(X[feature_cols].values))
 
-    # Scale target too (for stable LSTM training; rescale predictions back)
-    y_arr    = y.values.astype(np.float32)
-    y_mean   = float(y_arr.mean())
-    y_std    = float(y_arr.std())
+    y_arr  = y.values.astype(np.float32)
+    y_tr_stats = y_arr[:train_end_t]
+    y_mean = float(np.nanmean(y_tr_stats))
+    y_std  = float(np.nanstd(y_tr_stats))
     y_scaled = (y_arr - y_mean) / (y_std + 1e-8)
 
-    # Build sequences
-    seq_len = cfg.sequence_length
+    # Build sequences over ALL rows (labeled + live). y_seq[i] targets row
+    # i + seq_len; live targets are NaN and are excluded from train/val.
     X_seq, y_seq = build_sequences(X_scaled, y_scaled, seq_len)
-    # Corresponding dates for y_seq[i] = y[i + seq_len]
-    dates = X["week_date"].values[seq_len:]
+    dates = X["week_date"].values[seq_len - 1:]
+    target_is_live = is_live[seq_len - 1:]
 
     n_seq = len(y_seq)
-    train_end = max(cfg.initial_train_weeks - seq_len, int(n_seq * 0.70))
-    val_end   = min(train_end + cfg.val_weeks, n_seq)
+    # Sequence i targets row t = i + seq_len - 1  =>  i = t - seq_len + 1
+    train_end_s = max(0, train_end_t - seq_len + 1)      # targets < train_end_t
+    val_end_s   = max(train_end_s, n_lab - seq_len + 1)  # labeled targets only
 
-    X_tr, y_tr   = X_seq[:train_end], y_seq[:train_end]
-    X_val, y_val = X_seq[train_end:val_end], y_seq[train_end:val_end]
+    X_tr, y_tr   = X_seq[:train_end_s], y_seq[:train_end_s]
+    X_val, y_val = X_seq[train_end_s:val_end_s], y_seq[train_end_s:val_end_s]
 
-    print(f"[Part2a] Sequences: total={n_seq} | train={train_end} | val={val_end - train_end}")
+    if len(X_tr) < 30 or len(X_val) < 8:
+        print(f"[Part2a] FATAL: Not enough sequences (train={len(X_tr)}, "
+              f"val={len(X_val)}). Need more weekly history.")
+        summary = {
+            "script_version": SCRIPT_VERSION,
+            "run_utc": datetime.now(timezone.utc).isoformat(),
+            "lstm_sleeve_recommended": False,
+            "reason": "insufficient_history",
+        }
+        with open(out_dir / "gas_part2a_summary.json", "w") as f:
+            json.dump(summary, f, indent=2)
+        return 0
+
+    print(f"[Part2a] Sequences: total={n_seq} | train={len(X_tr)} | "
+          f"val={len(X_val)} (common gate window: last {val_len} labeled weeks) | "
+          f"live={int(target_is_live.sum())}")
 
     # DataLoaders
     train_ds = TensorDataset(
@@ -435,15 +526,20 @@ def main() -> int:
                                       np.where(val_actuals != 0, val_actuals, np.nan)))) * 100
     print(f"[Part2a] LSTM val RMSE: {lstm_rmse:.4f} | MAE: {lstm_mae:.4f} | MAPE: {lstm_mape:.2f}%")
 
-    # Gate check
+    # Gate check — FIX (Audit 2026-08): missing baselines previously left the
+    # default recommended=True in place. An optional experimental sleeve must
+    # fail CLOSED: both baselines are required, and the LSTM must beat both.
     base_rmse, xgb_rmse = load_baseline_rmse(part2_dir, part2b_dir)
-    recommended = True
-    if base_rmse is not None:
-        recommended = lstm_rmse < base_rmse
-        print(f"[Part2a] LSTM vs Base: {lstm_rmse:.4f} < {base_rmse:.4f} -> {recommended}")
-    if xgb_rmse is not None:
-        recommended = recommended and (lstm_rmse < xgb_rmse)
-        print(f"[Part2a] LSTM vs XGB:  {lstm_rmse:.4f} < {xgb_rmse:.4f} -> {recommended}")
+    if base_rmse is None or xgb_rmse is None:
+        recommended = False
+        print(f"[Part2a] Gate FAILS CLOSED — missing baseline(s): "
+              f"base_rmse={base_rmse}, xgb_rmse={xgb_rmse}")
+    else:
+        recommended = (lstm_rmse < base_rmse) and (lstm_rmse < xgb_rmse)
+        print(f"[Part2a] LSTM vs Base: {lstm_rmse:.4f} < {base_rmse:.4f} "
+              f"-> {lstm_rmse < base_rmse}")
+        print(f"[Part2a] LSTM vs XGB:  {lstm_rmse:.4f} < {xgb_rmse:.4f} "
+              f"-> {lstm_rmse < xgb_rmse}")
 
     # Full prediction tape
     model.eval()
@@ -458,14 +554,18 @@ def main() -> int:
 
     tape = pd.DataFrame({
         "week_date": pd.to_datetime(dates),
-        "actual": y_arr[seq_len:],
+        "actual": y_arr[seq_len - 1:],   # NaN for live targets by construction
         "pred_lstm": all_preds,
+        "is_live": target_is_live,
     })
 
-    # Latest week forecast
+    # Live next-week forecast (last sequence ends at the live row when present)
     latest_pred = float(all_preds[-1])
     latest_week = pd.to_datetime(dates[-1])
-    print(f"[Part2a] Latest ({latest_week.date()}) LSTM forecast: ${latest_pred:.3f}/gal")
+    target_week = latest_week + pd.Timedelta(weeks=1)
+    live_tag = "LIVE" if n_live else "RETROSPECTIVE"
+    print(f"[Part2a] {live_tag} forecast — anchored {latest_week.date()}, "
+          f"targeting week of {target_week.date()}: ${latest_pred:.3f}/gal")
 
     # Write artifacts
     tape_path = out_dir / "gas_lstm_tape.parquet"
@@ -494,9 +594,12 @@ def main() -> int:
         "baseline_val_rmse": base_rmse,
         "xgb_val_rmse": xgb_rmse,
         "latest_forecast": {
-            "week": latest_week.strftime("%Y-%m-%d"),
+            "anchor_week": latest_week.strftime("%Y-%m-%d"),
+            "target_week": target_week.strftime("%Y-%m-%d"),
             "pred_lstm": round(latest_pred, 4),
+            "is_true_live_forecast": bool(n_live),
         },
+        "gate_window": "last_val_weeks_labeled_rows",
         "architecture": {
             "sequence_length": seq_len,
             "n_features": n_features,
