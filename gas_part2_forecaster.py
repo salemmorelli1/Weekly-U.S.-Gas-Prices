@@ -90,10 +90,10 @@ class Part2Config:
     out_dir_name: str = "artifacts_part2"
     seed: int = 42
 
-    # Walk-forward CV settings
-    initial_train_weeks: int = 156   # 3 years
-    val_weeks: int = 52              # 1 year validation window
-    test_weeks: int = 52             # 1 year held-out test
+    # Validation settings — the last `val_weeks` labeled rows form the
+    # COMMON GATE WINDOW shared by Part 2 / 2b / 2a (see walk_forward_train).
+    val_weeks: int = 52              # 1 year trailing validation window
+    min_train_weeks: int = 156       # warn below 3 years of training data
 
     # Model hyperparameters
     hgb_max_iter: int = 500
@@ -225,11 +225,32 @@ def load_features(part1_dir: Path) -> Tuple[pd.DataFrame, pd.Series]:
 
     X["week_date"] = pd.to_datetime(X["week_date"])
     y = y_df["target_gas_price"]
+
+    # Live-row contract (Audit 2026-08): Part 1 now ships trailing rows whose
+    # targets are not yet realized, flagged is_live=1. Older matrices without
+    # the flag are treated as all-labeled for backward compatibility.
+    if "is_live" not in X.columns:
+        X = X.copy()
+        X["is_live"] = 0
     return X, y
 
 
+NON_FEATURE_COLS = ("week_date", "is_live")
+
+
 def get_feature_cols(X: pd.DataFrame) -> List[str]:
-    return [c for c in X.columns if c != "week_date"]
+    return [c for c in X.columns if c not in NON_FEATURE_COLS]
+
+
+def split_labeled_live(
+    X: pd.DataFrame, y: pd.Series,
+) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
+    """Split into (labeled X, labeled y, live X). Live rows have no target yet."""
+    labeled_mask = (X["is_live"].values == 0) & y.notna().values
+    X_lab = X.loc[labeled_mask].reset_index(drop=True)
+    y_lab = y.loc[labeled_mask].reset_index(drop=True)
+    X_live = X.loc[X["is_live"].values == 1].reset_index(drop=True)
+    return X_lab, y_lab, X_live
 
 
 # ── Walk-forward training ──────────────────────────────────────────────────────
@@ -240,8 +261,21 @@ def walk_forward_train(
     cfg: Part2Config,
 ) -> Tuple[Dict[str, object], Dict[str, float], pd.DataFrame]:
     """
-    Walk-forward cross-validation.
-    Returns (fitted_models, val_metrics, oof_predictions_df).
+    Out-of-sample validation on the COMMON GATE WINDOW, then refit on all
+    labeled rows for the live forecast.
+
+    FIX (Audit 2026-08):
+      - The docstring/signature previously disagreed (declared 3-tuple,
+        returned 4). Corrected: returns
+        (fitted_models, ensemble_weights, flat_val_metrics, oof_df, val_start_idx).
+      - The validation window is now the LAST cfg.val_weeks labeled rows.
+        This window is the shared sleeve-gate contract: Part 2, Part 2b, and
+        Part 2a all score on the same trailing 52 labeled weeks, so the
+        inverse-RMSE gates in Part 3 compare like with like. The previous
+        version validated on an early-2000s window while the sleeves used
+        different splits — the gate RMSEs were not comparable.
+
+    X and y must already be labeled-rows-only (no live rows).
     """
     feature_cols = get_feature_cols(X)
     X_vals = X[feature_cols].values
@@ -251,19 +285,17 @@ def walk_forward_train(
 
     models = build_models(cfg)
     val_preds: Dict[str, List[float]] = {m: [] for m in models}
-    val_dates: List[pd.Timestamp] = []
-    val_actuals: List[float] = []
 
-    train_end = cfg.initial_train_weeks
-    val_end   = train_end + cfg.val_weeks
+    # Common gate window: last val_weeks labeled rows.
+    val_len = min(cfg.val_weeks, max(1, int(n * 0.25)))
+    train_end = n - val_len
+    val_end   = n
+    if train_end < cfg.min_train_weeks:
+        print(f"[Part2] WARN: Only {train_end} training rows "
+              f"(recommended >= {cfg.min_train_weeks}).")
 
-    if val_end > n:
-        print(f"[Part2] WARN: Not enough data for full walk-forward CV "
-              f"({n} rows, need {val_end}). Training on all available data.")
-        train_end = max(n - cfg.val_weeks, int(n * 0.8))
-        val_end = n
-
-    print(f"[Part2] Walk-forward: train 0:{train_end}, val {train_end}:{val_end}")
+    print(f"[Part2] Common gate window: train 0:{train_end}, val {train_end}:{val_end} "
+          f"(last {val_len} labeled weeks)")
 
     Xtr = X_vals[:train_end]
     ytr = y_vals[:train_end]
@@ -304,12 +336,10 @@ def walk_forward_train(
 
     print(f"[Part2] Ensemble weights: { {k: f'{v:.3f}' for k, v in weights.items()} }")
 
-    # Re-fit on full data up to val_end
-    print("[Part2] Re-fitting on train+val data...")
-    Xfull = X_vals[:val_end]
-    yfull = y_vals[:val_end]
+    # Re-fit on ALL labeled data so the live forecast uses every realized week.
+    print("[Part2] Re-fitting on all labeled data for the live forecast...")
     for name, model in models.items():
-        model.fit(Xfull, yfull)
+        model.fit(X_vals, y_vals)
 
     # OOF predictions DataFrame (val window)
     oof_df = pd.DataFrame({
@@ -325,28 +355,54 @@ def walk_forward_train(
     oof_df["pred_ensemble"] = oof_ensemble
     oof_df["weights_json"] = json.dumps(weights)
 
+    # Ensemble metrics on the common gate window — this is the number Part 2b
+    # and Part 2a gate against, so it must exist under an "ensemble" key.
+    ens_metrics = compute_metrics(np.array(val_actuals), oof_ensemble)
+    print(f"[Part2] ENSEMBLE val RMSE: {ens_metrics['rmse']:.4f} | "
+          f"MAE: {ens_metrics['mae']:.4f} | MAPE: {ens_metrics['mape']:.2f}%")
+
     # Flatten val_metrics for return
     flat_val_metrics: Dict[str, float] = {}
     for model_name, m in val_metrics.items():
         for metric_name, val in m.items():
             flat_val_metrics[f"{model_name}_{metric_name}"] = float(val) if val is not None else np.nan
+    for metric_name, val in ens_metrics.items():
+        flat_val_metrics[f"ensemble_{metric_name}"] = float(val) if val is not None else np.nan
 
-    return models, weights, flat_val_metrics, oof_df
+    return models, weights, flat_val_metrics, oof_df, train_end
 
 
 # ── Live prediction ────────────────────────────────────────────────────────────
 
 def predict_latest(
-    X: pd.DataFrame,
+    X_lab: pd.DataFrame,
+    X_live: pd.DataFrame,
     models: Dict[str, object],
     weights: Dict[str, float],
-) -> Dict[str, float]:
+) -> Tuple[Dict[str, float], pd.Timestamp, bool]:
     """
-    Predict on the most recent week's features.
-    Returns dict with per-model and ensemble forecast.
+    Predict the live row — the genuine next-week forecast.
+
+    FIX (Live-row contract, Audit 2026-08): the previous version predicted on
+    the last row of the labeled matrix, i.e. a week whose target price was
+    already realized. It never produced an actual forward forecast. Now the
+    live row (target not yet realized) is preferred; the last labeled row is
+    only used as a retrospective fallback when no live row exists.
+
+    Returns (preds, forecast_anchor_week, is_true_live_forecast).
     """
-    feature_cols = get_feature_cols(X)
-    latest_row = X.iloc[[-1]][feature_cols].values
+    feature_cols = get_feature_cols(X_lab)
+    if len(X_live):
+        anchor = X_live.iloc[[-1]]
+        is_true_live = True
+    else:
+        anchor = X_lab.iloc[[-1]]
+        is_true_live = False
+        print("[Part2] WARN: No live row — forecast is retrospective "
+              "(its target week is already realized).")
+
+    anchor_week = pd.to_datetime(anchor["week_date"].iloc[0])
+    latest_row = anchor[feature_cols].values
 
     preds: Dict[str, float] = {}
     for name, model in models.items():
@@ -356,41 +412,80 @@ def predict_latest(
             print(f"[Part2] {name} prediction failed: {e}")
             preds[f"pred_{name}"] = np.nan
 
-    ensemble = sum(
-        weights.get(name, 0.0) * preds.get(f"pred_{name}", np.nan)
-        for name in models
-        if np.isfinite(preds.get(f"pred_{name}", np.nan))
-    )
-    preds["pred_ensemble"] = float(ensemble)
-    return preds
+    # Per-forecast weight renormalization over the models that succeeded —
+    # a single failed model must not drag the ensemble toward zero.
+    num = 0.0
+    den = 0.0
+    for name in models:
+        v = preds.get(f"pred_{name}", np.nan)
+        if np.isfinite(v):
+            w = weights.get(name, 0.0)
+            num += w * v
+            den += w
+    preds["pred_ensemble"] = float(num / den) if den > 0 else np.nan
+    return preds, anchor_week, is_true_live
 
 
 # ── Full forecast tape ─────────────────────────────────────────────────────────
 
 def build_forecast_tape(
-    X: pd.DataFrame,
-    y: pd.Series,
+    X_lab: pd.DataFrame,
+    y_lab: pd.Series,
+    X_live: pd.DataFrame,
     models: Dict[str, object],
     weights: Dict[str, float],
+    val_start_idx: int,
 ) -> pd.DataFrame:
-    """Generate predictions for all rows (for historical analysis)."""
-    feature_cols = get_feature_cols(X)
-    tape = pd.DataFrame({"week_date": X["week_date"], "actual": y.values})
+    """
+    Generate predictions for all rows (labeled + live) for historical analysis.
+
+    FIX (Audit 2026-08):
+      - Live rows are included with actual=NaN and in_sample=0.
+      - in_sample flags rows the final models were trained on. Since the
+        final refit uses ALL labeled rows, every labeled row is in-sample —
+        honest OOS history lives in the OOF file (common gate window, flagged
+        here too via oos_val=1 for convenience).
+      - Ensemble fusion previously used fillna(0), which dragged the fused
+        value toward zero wherever a model failed. Now weights renormalize
+        per row over finite predictions only.
+    """
+    feature_cols = get_feature_cols(X_lab)
+    n_lab, n_live = len(X_lab), len(X_live)
+    all_X = pd.concat([X_lab, X_live], ignore_index=True) if n_live else X_lab
+    actual = np.concatenate([y_lab.values, np.full(n_live, np.nan)]) if n_live else y_lab.values
+
+    tape = pd.DataFrame({"week_date": all_X["week_date"], "actual": actual})
+    tape["in_sample"] = np.concatenate([np.ones(n_lab, dtype=int),
+                                        np.zeros(n_live, dtype=int)])
+    oos_val = np.zeros(len(tape), dtype=int)
+    oos_val[val_start_idx:n_lab] = 1  # common gate window rows
+    tape["oos_val"] = oos_val
+    tape["is_live"] = np.concatenate([np.zeros(n_lab, dtype=int),
+                                      np.ones(n_live, dtype=int)])
 
     for name, model in models.items():
         try:
-            tape[f"pred_{name}"] = model.predict(X[feature_cols].values)
+            tape[f"pred_{name}"] = model.predict(all_X[feature_cols].values)
         except Exception as e:
             print(f"[Part2] Full tape {name} failed: {e}")
             tape[f"pred_{name}"] = np.nan
 
-    pred_cols = [f"pred_{name}" for name in models if f"pred_{name}" in tape.columns]
-    ensemble = np.zeros(len(tape))
-    for name in models:
-        col = f"pred_{name}"
-        if col in tape.columns:
-            ensemble += weights.get(name, 0.0) * tape[col].fillna(0).values
-    tape["pred_ensemble"] = ensemble
+    # Per-row renormalized weighted ensemble over finite predictions
+    pred_matrix = np.column_stack([
+        tape[f"pred_{name}"].values if f"pred_{name}" in tape.columns
+        else np.full(len(tape), np.nan)
+        for name in models
+    ])
+    w_vec = np.array([weights.get(name, 0.0) for name in models])
+    finite = np.isfinite(pred_matrix)
+    w_row = finite * w_vec[None, :]
+    w_sum = w_row.sum(axis=1)
+    fused = np.where(
+        w_sum > 0,
+        np.nansum(np.where(finite, pred_matrix, 0.0) * w_row, axis=1) / np.where(w_sum > 0, w_sum, 1.0),
+        np.nan,
+    )
+    tape["pred_ensemble"] = fused
 
     return tape
 
@@ -405,20 +500,27 @@ def write_part2_summary(
     latest_week: pd.Timestamp,
     cfg: Part2Config,
     naive_metrics: Dict[str, float],
+    is_true_live: bool,
 ) -> None:
+    target_week = latest_week + pd.Timedelta(weeks=1)
     summary = {
         "script_version": SCRIPT_VERSION,
         "run_utc": datetime.now(timezone.utc).isoformat(),
-        "latest_week_forecast": latest_week.strftime("%Y-%m-%d"),
-        "latest_predictions": {k: round(v, 4) for k, v in latest_preds.items()},
+        "forecast_anchor_week": latest_week.strftime("%Y-%m-%d"),
+        "forecast_target_week": target_week.strftime("%Y-%m-%d"),
+        "is_true_live_forecast": bool(is_true_live),
+        "latest_predictions": {k: (round(v, 4) if np.isfinite(v) else None)
+                               for k, v in latest_preds.items()},
         "ensemble_weights": weights,
         "val_metrics": {k: round(v, 4) if np.isfinite(v) else None
                         for k, v in val_metrics.items()},
-        "naive_baseline_metrics": naive_metrics,
+        "naive_baseline_metrics": {k: (round(v, 4) if isinstance(v, float) and np.isfinite(v) else None)
+                                   for k, v in naive_metrics.items()},
         "config": {
-            "initial_train_weeks": cfg.initial_train_weeks,
             "val_weeks": cfg.val_weeks,
+            "min_train_weeks": cfg.min_train_weeks,
             "ensemble_weighting": cfg.ensemble_weighting,
+            "gate_window": "last_val_weeks_labeled_rows",
         },
     }
     path = out_dir / "gas_part2_summary.json"
@@ -447,36 +549,35 @@ def main() -> int:
         print(f"[Part2] FATAL: {e}. Run gas_part1 first.")
         return 1
 
-    print(f"[Part2] Features: {len(X)} rows x {len(get_feature_cols(X))} features")
-    print(f"[Part2] Target: ${y.min():.3f} - ${y.max():.3f}/gal\n")
+    X_lab, y_lab, X_live = split_labeled_live(X, y)
+    print(f"[Part2] Features: {len(X_lab)} labeled + {len(X_live)} live rows x "
+          f"{len(get_feature_cols(X))} features")
+    print(f"[Part2] Target: ${y_lab.min():.3f} - ${y_lab.max():.3f}/gal\n")
 
-    # Walk-forward training
-    models, weights, val_metrics, oof_df = walk_forward_train(X, y, cfg)
+    # Out-of-sample validation on the common gate window + final refit
+    models, weights, val_metrics, oof_df, val_start_idx = walk_forward_train(
+        X_lab, y_lab, cfg
+    )
 
-    # Full forecast tape (all historical rows)
-    tape = build_forecast_tape(X, y, models, weights)
+    # Full forecast tape (labeled + live rows)
+    tape = build_forecast_tape(X_lab, y_lab, X_live, models, weights, val_start_idx)
 
-    # Latest week prediction
-    latest_preds = predict_latest(X, models, weights)
-    latest_week = pd.to_datetime(X["week_date"].iloc[-1])
-    print(f"\n[Part2] Latest week ({latest_week.date()}) forecast:")
+    # Live next-week forecast
+    latest_preds, latest_week, is_true_live = predict_latest(
+        X_lab, X_live, models, weights
+    )
+    target_week = latest_week + pd.Timedelta(weeks=1)
+    live_tag = "LIVE" if is_true_live else "RETROSPECTIVE"
+    print(f"\n[Part2] {live_tag} forecast — anchored on week of {latest_week.date()}, "
+          f"targeting week of {target_week.date()}:")
     for k, v in latest_preds.items():
         if np.isfinite(v):
             print(f"  {k}: ${v:.3f}/gal")
 
-    # Naive baseline for comparison
-    naive_metrics = naive_baseline_metrics(y.values)
+    # Naive baseline for comparison (labeled rows)
+    naive_metrics = naive_baseline_metrics(y_lab.values)
     print(f"\n[Part2] Naive baseline RMSE: {naive_metrics['rmse']:.4f} | "
           f"MAE: {naive_metrics['mae']:.4f}")
-
-    # Test set metrics (last val_weeks rows of tape)
-    test_df = tape.tail(cfg.val_weeks).copy()
-    test_metrics = compute_metrics(
-        test_df["actual"].values,
-        test_df["pred_ensemble"].values,
-    )
-    print(f"[Part2] Ensemble test RMSE: {test_metrics['rmse']:.4f} | "
-          f"MAPE: {test_metrics['mape']:.2f}%")
 
     # Write artifacts
     tape_path = out_dir / "gas_forecast_tape.parquet"
@@ -495,7 +596,7 @@ def main() -> int:
     print(f"[Part2] Models -> {model_path}")
 
     write_part2_summary(out_dir, latest_preds, val_metrics, weights,
-                        latest_week, cfg, naive_metrics)
+                        latest_week, cfg, naive_metrics, is_true_live)
 
     print("\n[Part2] Forecaster ensemble complete.")
     return 0
