@@ -8,8 +8,7 @@ Canonical weekly production runner for the GasPriceForecast stack.
 Authoritative weekly execution order
 --------------------------------------
   gas_part0  (data infrastructure + FRED)
-  gas_part0b (CollectAPI live prices + weather)
-  gas_part0c (EIA API direct fetcher)
+  gas_part0c (EIA Open Data API direct fetcher)
   gas_part6  (regime engine)
   gas_part1  (feature builder)
   gas_part2  (sklearn ensemble forecaster)
@@ -77,9 +76,13 @@ os.environ.setdefault("GASPRICE_ROOT", str(PROJECT_DIR))
 
 # ── Canonical files ────────────────────────────────────────────────────────────
 
+# NOTE (Audit 2026-08): the PART0B live-price fetcher slot was removed.
+# CollectAPI stopped being free; its OilPriceAPI replacement was dropped in
+# favor of relying on the EIA Open Data API (gas_part0c) + FRED, which carry
+# all the fundamentals the model actually uses. Part 0c is the sole
+# supplementary fetcher.
 CANONICAL_FILES: Dict[str, str] = {
     "PART0":  "gas_part0_data_infrastructure.py",
-    "PART0B": "gas_part0b_oilpriceapi_fetcher.py",
     "PART0C": "gas_part0c_eia_fetcher.py",
     "PART1":  "gas_part1_feature_builder.py",
     "PART2":  "gas_part2_forecaster.py",
@@ -95,7 +98,6 @@ BACKFILL_FILE = "gas_backfill_realized.py"
 # Execution order — PART2B and PART2A are optional (non-blocking)
 PIPELINE_ORDER: List[str] = [
     "PART0",
-    "PART0B",
     "PART0C",
     "PART6",
     "PART1",
@@ -106,7 +108,7 @@ PIPELINE_ORDER: List[str] = [
     "PART9",
 ]
 
-OPTIONAL_PARTS = {"PART2B", "PART2A", "PART0B", "PART0C"}
+OPTIONAL_PARTS = {"PART2B", "PART2A", "PART0C"}
 
 # Required core parts for a valid run
 REQUIRED_PARTS = [p for p in PIPELINE_ORDER if p not in OPTIONAL_PARTS]
@@ -174,27 +176,25 @@ def run_pipeline(
     project_dir: Path,
     with_backfill: bool = False,
     skip_lstm: bool = False,
-    skip_live_prices: bool = False,
 ) -> int:
     common_env = {
         "GASPRICE_ROOT": str(project_dir),
     }
 
     print("\n=== AUTHORITATIVE WEEKLY EXECUTION ORDER ===")
-    print("Part0 -> Part0b* -> Part0c* -> Part6 -> Part1 -> Part2 -> "
+    print("Part0 -> Part0c* -> Part6 -> Part1 -> Part2 -> "
           "Part2b* -> Part2a* -> Part3 -> Part9")
     print("(* optional / non-blocking)\n")
 
-    # FIX (Audit 2026-08): the GitHub workflow has always passed --skip-lstm
-    # and --skip-live-prices, but the runner silently discarded them via
-    # parse_known_args — the toggles in the workflow_dispatch UI did nothing.
+    # FIX (Audit 2026-08): the GitHub workflow has always passed --skip-lstm,
+    # but the runner silently discarded it via parse_known_args — the toggle
+    # in the workflow_dispatch UI did nothing. (Old --skip-collectapi /
+    # --skip-live-prices flags fall through parse_known_args harmlessly now
+    # that the Part 0b slot is removed.)
     skipped_by_flag = set()
     if skip_lstm:
         skipped_by_flag.add("PART2A")
         print("[Runner] --skip-lstm: PART2A (LSTM sleeve) will be skipped.")
-    if skip_live_prices:
-        skipped_by_flag.add("PART0B")
-        print("[Runner] --skip-live-prices: PART0B (OilPriceAPI) will be skipped.")
 
     for label in PIPELINE_ORDER:
         script_name = CANONICAL_FILES.get(label)
@@ -269,17 +269,6 @@ def main() -> int:
         help="Skip the Part 2a LSTM sleeve (faster run).",
     )
     parser.add_argument(
-        "--skip-live-prices",
-        action="store_true",
-        help="Skip Part 0b OilPriceAPI live commodity snapshot.",
-    )
-    parser.add_argument(
-        "--skip-collectapi",
-        action="store_true",
-        help="Deprecated alias for --skip-live-prices (CollectAPI was "
-             "replaced by OilPriceAPI in Audit 2026-08).",
-    )
-    parser.add_argument(
         "--retrain",
         action="store_true",
         help="Accepted for workflow compatibility. Every weekly run already "
@@ -329,7 +318,6 @@ def main() -> int:
         PROJECT_DIR,
         with_backfill=args.with_backfill,
         skip_lstm=args.skip_lstm,
-        skip_live_prices=args.skip_live_prices or args.skip_collectapi,
     )
 
     if rc != 0:

@@ -347,10 +347,10 @@ def build_feature_matrix(
     y = build_target(df, cfg)
 
     # Identify feature columns (exclude raw source cols and target)
-    # "live_" prefix (Audit 2026-08): OilPriceAPI live commodity snapshot
-    # columns are supplementary — present only for the current week, so as
-    # model features they'd be ~100% NaN historically. Excluded like
-    # gas_us_live before them.
+    # "live_" prefix (Audit 2026-08): defensive exclusion kept from the
+    # retired live-price fetcher era — any live_* snapshot column that may
+    # exist in an older master would be ~100% NaN historically and must not
+    # become a model feature. Harmless when no such columns exist.
     exclude_prefixes = ("week_date", "target_", "regime_label", "regime_int", "live_")
     exclude_cols = {
         "gas_us_avg", "wti_crude", "rbob_gasoline", "natural_gas",

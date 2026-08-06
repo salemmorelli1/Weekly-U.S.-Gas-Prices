@@ -4,8 +4,7 @@
 #
 # API keys required (all free):
 #   FRED_API_KEY   — https://fred.stlouisfed.org/docs/api/api_key.html
-#   OILPRICEAPI_KEY — https://www.oilpriceapi.com  (live commodity snapshot)
-#   EIA_API_KEY    — https://www.eia.gov/opendata/register.php
+#   EIA_API_KEY    — https://www.eia.gov/opendata/register.php (recommended)
 
 # ── Core data ──────────────────────────────────────────────────────────────────
 numpy>=1.24

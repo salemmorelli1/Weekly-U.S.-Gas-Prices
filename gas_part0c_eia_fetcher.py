@@ -27,7 +27,7 @@ PET.WREFINER.W  — US Refinery Utilization Rate (%)
 PET.EMD_EPD2D_PTE_NUS_DPG.W — US Regular Conventional Gas Price (weekly $/gal)
 PET.WTTSTUS1.W  — US Total Petroleum Stocks
 
-Pipeline position: THIRD — runs after gas_part0b.
+Pipeline position: SECOND — runs after gas_part0 (the Part 0b live-price slot was removed, Audit 2026-08).
 """
 from __future__ import annotations
 

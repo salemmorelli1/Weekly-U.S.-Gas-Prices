@@ -31,14 +31,14 @@ name: Weekly Gas Price Forecast
 # (historically up to ~103 minutes). Manual dispatches bypass the gate.
 #
 # Execution order:
-#   Part 0  → Part 0b* → Part 0c* → Part 6 → Part 1
+#   Part 0  → Part 0c* → Part 6 → Part 1
 #   → Part 2 → Part 2b* → Part 2a* → Part 3 → Part 9
 #   (* optional / non-blocking)
 #
-# Secrets required (Settings → Secrets → Actions):
-#   FRED_API_KEY      free at https://fred.stlouisfed.org/docs/api/api_key.html
-#   EIA_API_KEY       free at https://www.eia.gov/opendata/register.php
-#   OILPRICEAPI_KEY   free at https://www.oilpriceapi.com (200 req/month)
+# Secrets (Settings → Secrets → Actions):
+#   FRED_API_KEY      REQUIRED — free at https://fred.stlouisfed.org/docs/api/api_key.html
+#   EIA_API_KEY       recommended — free at https://www.eia.gov/opendata/register.php
+#                     (powers Part 0c: stocks, demand, refinery fundamentals)
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -57,11 +57,6 @@ on:
         required: false
         default: false
         type: boolean
-      skip_live_prices:
-        description: "Skip Part 0b OilPriceAPI live commodity snapshot"
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: write
@@ -77,7 +72,6 @@ env:
   GASPRICE_ROOT: ${{ github.workspace }}
   FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
   EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
-  OILPRICEAPI_KEY: ${{ secrets.OILPRICEAPI_KEY }}
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   PYTHONUNBUFFERED: "1"
 
@@ -227,12 +221,6 @@ jobs:
             echo "Flag: --skip-lstm"
           fi
 
-          SKIP_LIVE="${{ github.event.inputs.skip_live_prices || 'false' }}"
-          if [ "$SKIP_LIVE" = "true" ]; then
-            ARGS="$ARGS --skip-live-prices"
-            echo "Flag: --skip-live-prices"
-          fi
-
           echo "args=${ARGS}" >> "$GITHUB_OUTPUT"
           echo "Run arguments: ${ARGS}"
 
@@ -250,15 +238,9 @@ jobs:
           fi
 
           if [ -z "$EIA_API_KEY" ]; then
-            echo "::warning::EIA_API_KEY not set — Part 0c EIA direct data will be skipped."
+            echo "::warning::EIA_API_KEY not set — Part 0c EIA fundamentals (stocks, demand, refinery) will be skipped. Free key: https://www.eia.gov/opendata/register.php"
           else
             echo "EIA_API_KEY:    set"
-          fi
-
-          if [ -z "$OILPRICEAPI_KEY" ]; then
-            echo "::warning::OILPRICEAPI_KEY not set — Part 0b live commodity snapshot will be skipped."
-          else
-            echo "OILPRICEAPI_KEY: set"
           fi
 
       # ── 9. Create artifact directories ───────────────────────────────────
