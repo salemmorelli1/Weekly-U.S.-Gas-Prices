@@ -1,30 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-gas_part2_forecaster.py
-========================
-Sklearn ensemble forecaster for weekly U.S. average gas prices.
+gas_part1_feature_builder.py
+=============================
+Feature engineering for the Gas Price Forecasting model.
 
-Models trained
---------------
-  1. HistGradientBoostingRegressor  (primary)
-  2. RandomForestRegressor
-  3. ElasticNet (linear baseline)
-  4. GradientBoostingRegressor (secondary GBM)
-
-Ensemble method: weighted average (weights optimized on validation set).
-
-Outputs
--------
-  artifacts_part2/gas_forecast_tape.parquet  — week_date + predictions per model + ensemble
-  artifacts_part2/gas_part2_summary.json     — metrics, weights, model health
-
-Metrics computed
+Responsibilities
 ----------------
-  MAE, RMSE, MAPE, Directional Accuracy, R^2
-  Walk-forward cross-validation (no look-ahead bias)
+- Load the Part0 master parquet + Part6 regime tape
+- Compute all model input features (lags, momentum, seasonality, fundamentals)
+- Define the prediction target: next week's U.S. average regular gas price
+- Write the canonical feature matrix and target series
+- Write part1_summary.json for downstream consumers
 
-Pipeline position: SIXTH — after Part1.
+Feature families
+----------------
+  LAG       — gas price lags (1w, 2w, 4w, 8w, 12w, 26w, 52w)
+  MOMENTUM  — rolling returns and velocity
+  VOLATILITY— realized vol, price range
+  CRUDE     — WTI crude price, crude returns, crack spread
+  RBOB      — RBOB gasoline futures signals
+  EIA       — inventory, demand, refinery utilization
+  SEASONAL  — month dummies, driving-season flag, hurricane-season flag
+  MACRO     — USD index, Treasury yield, equity market
+  REGIME    — HMM regime one-hot encoding
+
+Pipeline position: FIFTH — after Part6.
 """
 from __future__ import annotations
 
@@ -59,64 +60,48 @@ def _colab_init(extra_packages=None):
 
 _colab_init(extra_packages=["scikit-learn", "pyarrow"])
 
-import json, os, pickle, warnings
+import json, os, warnings
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import (
-    GradientBoostingRegressor,
-    HistGradientBoostingRegressor,
-    RandomForestRegressor,
-)
-from sklearn.impute import SimpleImputer
-from sklearn.linear_model import ElasticNet, Ridge
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("ignore")
 
-SCRIPT_VERSION = "GAS_PART2_V1_CANONICAL"
+SCRIPT_VERSION = "GAS_PART1_V1_CANONICAL"
 
 
 @dataclass(frozen=True)
-class Part2Config:
+class Part1Config:
     root_env_var: str = "GASPRICE_ROOT"
-    part1_dir_name: str = "artifacts_part1"
-    out_dir_name: str = "artifacts_part2"
-    seed: int = 42
+    part0_dir_name: str = "artifacts_part0"
+    part6_dir_name: str = "artifacts_part6"
+    out_dir_name: str = "artifacts_part1"
+    history_start: str = "2000-01-01"
+    history_end: str = date.today().strftime("%Y-%m-%d")
 
-    # Validation settings — the last `val_weeks` labeled rows form the
-    # COMMON GATE WINDOW shared by Part 2 / 2b / 2a (see walk_forward_train).
-    val_weeks: int = 52              # 1 year trailing validation window
-    min_train_weeks: int = 156       # warn below 3 years of training data
+    # Prediction horizon: 1 week forward
+    horizon_weeks: int = 1
 
-    # Model hyperparameters
-    hgb_max_iter: int = 500
-    hgb_learning_rate: float = 0.05
-    hgb_max_depth: int = 5
-    hgb_l2: float = 1.0
+    # Lag windows (weeks)
+    lag_windows: Tuple[int, ...] = (1, 2, 3, 4, 6, 8, 12, 26, 52)
 
-    rf_n_estimators: int = 300
-    rf_max_depth: int = 10
-    rf_max_features: str = "sqrt"
+    # Rolling window sizes for vol/momentum features
+    vol_windows: Tuple[int, ...] = (4, 8, 13, 26)
+    momentum_windows: Tuple[int, ...] = (1, 2, 4, 8, 12, 26)
 
-    gbm_n_estimators: int = 300
-    gbm_learning_rate: float = 0.05
-    gbm_max_depth: int = 4
+    # Minimum non-NaN rows required to write feature matrix
+    min_clean_rows: int = 52
 
-    elasticnet_alpha: float = 0.1
-    elasticnet_l1_ratio: float = 0.5
-
-    # Ensemble weight optimization: "equal" or "val_rmse"
-    ensemble_weighting: str = "val_rmse"
+    # Feature imputation strategy for downstream models
+    impute_strategy: str = "median"   # for sklearn SimpleImputer in Part2
 
 
-def resolve_project_root(cfg: Part2Config) -> Path:
+def resolve_project_root(cfg: Part1Config) -> Path:
     env_root = os.environ.get(cfg.root_env_var, "").strip()
     if env_root:
         return Path(env_root).expanduser().resolve()
@@ -128,477 +113,426 @@ def resolve_project_root(cfg: Part2Config) -> Path:
         return Path.cwd().resolve()
 
 
-# ── Metrics ────────────────────────────────────────────────────────────────────
+# ── Feature builders ───────────────────────────────────────────────────────────
 
-def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
-    mask = np.isfinite(y_true) & np.isfinite(y_pred)
-    yt, yp = y_true[mask], y_pred[mask]
-    if len(yt) < 2:
-        return {"mae": np.nan, "rmse": np.nan, "mape": np.nan,
-                "r2": np.nan, "dir_acc": np.nan}
-
-    mae  = float(mean_absolute_error(yt, yp))
-    rmse = float(np.sqrt(mean_squared_error(yt, yp)))
-    mape = float(np.mean(np.abs((yt - yp) / np.where(yt != 0, yt, np.nan)))) * 100
-    r2   = float(r2_score(yt, yp))
-
-    # Directional accuracy: did we correctly predict week-over-week direction?
-    # Requires at least 2 data points; use index-based lag
-    dir_acc = np.nan
-    if len(yt) > 1:
-        true_dir = np.sign(np.diff(yt))
-        pred_dir = np.sign(np.diff(yp))
-        dir_acc  = float(np.mean(true_dir == pred_dir))
-
-    return {"mae": mae, "rmse": rmse, "mape": mape, "r2": r2, "dir_acc": dir_acc}
+def add_lag_features(df: pd.DataFrame, col: str, windows: Tuple[int, ...]) -> pd.DataFrame:
+    """Add lagged level and return features for a given column."""
+    for w in windows:
+        df[f"{col}_lag_{w}w"] = df[col].shift(w)
+        df[f"{col}_ret_{w}w"] = df[col].pct_change(w).shift(1)
+    return df
 
 
-def naive_baseline_metrics(y: np.ndarray) -> Dict[str, float]:
-    """Naive forecast: last week's price = next week's price."""
-    y_naive = np.roll(y, 1)
-    y_naive[0] = np.nan
-    return compute_metrics(y[1:], y_naive[1:])
+def add_volatility_features(df: pd.DataFrame, col: str, windows: Tuple[int, ...]) -> pd.DataFrame:
+    """Rolling realized volatility (std of weekly returns)."""
+    ret = df[col].pct_change(1).shift(1)
+    for w in windows:
+        # FIX (Audit 2026-08): min_periods must never exceed the window —
+        # max(2, w // 2) raised ValueError for w=1 windows. std() needs >= 2
+        # observations, so windows < 2 are skipped.
+        if w < 2:
+            continue
+        df[f"{col}_vol_{w}w"] = ret.rolling(w, min_periods=max(2, w // 2)).std()
+    return df
 
 
-# ── Model factory ──────────────────────────────────────────────────────────────
+def add_momentum_features(df: pd.DataFrame, col: str, windows: Tuple[int, ...]) -> pd.DataFrame:
+    """Price momentum: current price relative to rolling mean.
 
-def build_models(cfg: Part2Config) -> Dict[str, object]:
-    """Return dict of sklearn pipeline models."""
-    models = {
-        "hgb": HistGradientBoostingRegressor(
-            max_iter=cfg.hgb_max_iter,
-            learning_rate=cfg.hgb_learning_rate,
-            max_depth=cfg.hgb_max_depth,
-            l2_regularization=cfg.hgb_l2,
-            random_state=cfg.seed,
-        ),
-        "rf": make_pipeline(
-            SimpleImputer(strategy="median"),
-            RandomForestRegressor(
-                n_estimators=cfg.rf_n_estimators,
-                max_depth=cfg.rf_max_depth,
-                max_features=cfg.rf_max_features,
-                random_state=cfg.seed,
-                n_jobs=-1,
-            ),
-        ),
-        "gbm": make_pipeline(
-            SimpleImputer(strategy="median"),
-            GradientBoostingRegressor(
-                n_estimators=cfg.gbm_n_estimators,
-                learning_rate=cfg.gbm_learning_rate,
-                max_depth=cfg.gbm_max_depth,
-                random_state=cfg.seed,
-            ),
-        ),
-        "elasticnet": make_pipeline(
-            SimpleImputer(strategy="median"),
-            StandardScaler(),
-            ElasticNet(
-                alpha=cfg.elasticnet_alpha,
-                l1_ratio=cfg.elasticnet_l1_ratio,
-                max_iter=5000,
-            ),
-        ),
-        "ridge": make_pipeline(
-            SimpleImputer(strategy="median"),
-            StandardScaler(),
-            Ridge(alpha=1.0),
-        ),
+    FIX (Audit 2026-08): min_periods=max(2, w // 2) raised
+    "ValueError: min_periods 2 must be <= window 1" for the w=1 momentum
+    window in the default config — Part 1 could never complete a run.
+    min_periods is now clamped to the window size.
+    """
+    for w in windows:
+        mp = min(w, max(1, w // 2))
+        roll_mean = df[col].shift(1).rolling(w, min_periods=mp).mean()
+        df[f"{col}_mom_{w}w"] = (df[col].shift(1) / roll_mean.replace(0, np.nan)) - 1.0
+    return df
+
+
+def add_seasonal_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Month dummies, driving season, hurricane season, year-end flags."""
+    dt = pd.to_datetime(df["week_date"])
+    month = dt.dt.month
+    week_of_year = dt.dt.isocalendar().week.astype(int)
+
+    # Month dummies (exclude December to avoid multicollinearity)
+    for m in range(1, 12):
+        df[f"month_{m:02d}"] = (month == m).astype(int)
+
+    # Summer driving season: Memorial Day (late May) through Labor Day (early Sept)
+    df["driving_season"] = ((month >= 5) & (month <= 9)).astype(int)
+
+    # Peak driving (June–August)
+    df["peak_driving"] = ((month >= 6) & (month <= 8)).astype(int)
+
+    # Hurricane season (June 1 – November 30) — refinery disruption risk
+    df["hurricane_season"] = ((month >= 6) & (month <= 11)).astype(int)
+
+    # Winter heating demand (Dec–Feb)
+    df["winter_demand"] = ((month == 12) | (month <= 2)).astype(int)
+
+    # Spring refinery maintenance (Mar–Apr)
+    df["spring_maintenance"] = ((month >= 3) & (month <= 4)).astype(int)
+
+    # Week of year cyclical encoding (sin/cos)
+    df["week_sin"] = np.sin(2 * np.pi * week_of_year / 52.0)
+    df["week_cos"] = np.cos(2 * np.pi * week_of_year / 52.0)
+
+    # Month cyclical encoding
+    df["month_sin"] = np.sin(2 * np.pi * month / 12.0)
+    df["month_cos"] = np.cos(2 * np.pi * month / 12.0)
+
+    return df
+
+
+def add_crack_spread_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Crack spread and derived features."""
+    if "wti_crude" in df.columns and "gas_us_avg" in df.columns:
+        # Crude to gas ratio ($/gal vs $/bbl -> convert crude: $/bbl / 42 = $/gal)
+        crude_per_gal = df["wti_crude"] / 42.0
+        crack = df["gas_us_avg"].shift(1) - crude_per_gal.shift(1)
+        df["crack_spread"] = crack
+        roll_mean = crack.rolling(52, min_periods=13).mean()
+        roll_std  = crack.rolling(52, min_periods=13).std()
+        df["crack_spread_z"] = (crack - roll_mean) / roll_std.replace(0, np.nan)
+        df["crack_spread_chg_4w"] = crack.diff(4)
+
+    if "rbob_gasoline" in df.columns and "wti_crude" in df.columns:
+        # RBOB crack: RBOB ($/gal) - crude ($/bbl)/42
+        rbob_crack = df["rbob_gasoline"].shift(1) - (df["wti_crude"].shift(1) / 42.0)
+        df["rbob_crack_spread"] = rbob_crack
+        roll_mean = rbob_crack.rolling(26, min_periods=8).mean()
+        roll_std  = rbob_crack.rolling(26, min_periods=8).std()
+        df["rbob_crack_z"] = (rbob_crack - roll_mean) / roll_std.replace(0, np.nan)
+
+    return df
+
+
+def add_macro_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Macro signal features."""
+    if "treasury_10y" in df.columns:
+        df["treasury_chg_4w"] = df["treasury_10y"].diff(4).shift(1)
+        df["treasury_level"]  = df["treasury_10y"].shift(1)
+
+    if "usd_index" in df.columns:
+        df["usd_ret_4w"]  = df["usd_index"].pct_change(4).shift(1)
+        df["usd_ret_12w"] = df["usd_index"].pct_change(12).shift(1)
+        df["usd_z_26w"] = (
+            (df["usd_index"].shift(1) - df["usd_index"].shift(1).rolling(26, min_periods=8).mean())
+            / df["usd_index"].shift(1).rolling(26, min_periods=8).std().replace(0, np.nan)
+        )
+
+    if "sp500" in df.columns:
+        df["sp500_ret_4w"]  = df["sp500"].pct_change(4).shift(1)
+        df["sp500_vol_8w"]  = df["sp500"].pct_change(1).shift(1).rolling(8, min_periods=4).std()
+
+    if "energy_xle" in df.columns:
+        df["xle_ret_4w"] = df["energy_xle"].pct_change(4).shift(1)
+
+    # CPI energy inflation signal
+    if "cpi_energy" in df.columns:
+        df["cpi_energy_chg_4w"] = df["cpi_energy"].pct_change(4).shift(1)
+
+    return df
+
+
+def add_regime_features(df: pd.DataFrame, regime_tape: Optional[pd.DataFrame]) -> pd.DataFrame:
+    """Merge regime labels and probabilities from Part6."""
+    if regime_tape is None or regime_tape.empty:
+        print("[Part1] WARN: No regime tape — regime features skipped.")
+        return df
+
+    regime_tape = regime_tape.copy()
+    regime_tape["week_date"] = pd.to_datetime(regime_tape["week_date"])
+
+    df = df.merge(regime_tape, on="week_date", how="left")
+
+    # One-hot encode regime label
+    if "regime_label" in df.columns:
+        dummies = pd.get_dummies(
+            df["regime_label"].shift(1),  # use prior week's regime
+            prefix="regime",
+            dtype=float,
+        )
+        df = pd.concat([df, dummies], axis=1)
+
+    return df
+
+
+def add_eia_ratio_features(df: pd.DataFrame) -> pd.DataFrame:
+    """EIA-derived ratio features."""
+    if "eia_gas_stocks_total" in df.columns and "eia_gas_demand" in df.columns:
+        daily_demand = df["eia_gas_demand"] / 7.0
+        df["eia_days_supply"] = (
+            df["eia_gas_stocks_total"].shift(1) / daily_demand.shift(1).replace(0, np.nan)
+        )
+        # Days supply z-score
+        ds = df["eia_days_supply"]
+        roll_mean = ds.rolling(52, min_periods=13).mean()
+        roll_std  = ds.rolling(52, min_periods=13).std()
+        df["eia_days_supply_z"] = (ds - roll_mean) / roll_std.replace(0, np.nan)
+
+    return df
+
+
+# ── Target variable ────────────────────────────────────────────────────────────
+
+def build_target(df: pd.DataFrame, cfg: Part1Config) -> pd.Series:
+    """
+    Target: next week's U.S. average regular gas price ($/gal).
+    This is a direct price level forecast.
+    Also compute target_ret: the week-over-week return for diagnostics.
+    """
+    if "gas_us_avg" not in df.columns:
+        print("[Part1] WARN: gas_us_avg not found — target will be empty.")
+        return pd.Series(dtype=float, name="target_gas_price")
+
+    target = df["gas_us_avg"].shift(-cfg.horizon_weeks)
+    target.name = "target_gas_price"
+    return target
+
+
+# ── Assembly ───────────────────────────────────────────────────────────────────
+
+def build_feature_matrix(
+    master_df: pd.DataFrame,
+    regime_tape: Optional[pd.DataFrame],
+    cfg: Part1Config,
+) -> Tuple[pd.DataFrame, pd.Series]:
+    """
+    Build the full feature matrix and target series.
+    Returns (X_df, y_series) both indexed by week_date.
+    """
+    df = master_df.copy()
+    df["week_date"] = pd.to_datetime(df["week_date"])
+    df = df.sort_values("week_date").reset_index(drop=True)
+
+    print("[Part1] Building lag features...")
+    df = add_lag_features(df, "gas_us_avg", cfg.lag_windows)
+
+    print("[Part1] Building volatility features...")
+    df = add_volatility_features(df, "gas_us_avg", cfg.vol_windows)
+
+    print("[Part1] Building momentum features...")
+    df = add_momentum_features(df, "gas_us_avg", cfg.momentum_windows)
+
+    if "wti_crude" in df.columns:
+        df = add_lag_features(df, "wti_crude", (1, 2, 4, 8, 12))
+        df = add_volatility_features(df, "wti_crude", (4, 8))
+
+    if "rbob_gasoline" in df.columns:
+        df = add_lag_features(df, "rbob_gasoline", (1, 2, 4, 8))
+
+    if "natural_gas" in df.columns:
+        df = add_lag_features(df, "natural_gas", (1, 4, 8))
+
+    print("[Part1] Building crack spread features...")
+    df = add_crack_spread_features(df)
+
+    print("[Part1] Building seasonal features...")
+    df = add_seasonal_features(df)
+
+    print("[Part1] Building macro features...")
+    df = add_macro_features(df)
+
+    print("[Part1] Building EIA ratio features...")
+    df = add_eia_ratio_features(df)
+
+    print("[Part1] Merging regime features...")
+    df = add_regime_features(df, regime_tape)
+
+    # Build target
+    y = build_target(df, cfg)
+
+    # Identify feature columns (exclude raw source cols and target)
+    exclude_prefixes = ("week_date", "target_", "regime_label", "regime_int")
+    exclude_cols = {
+        "gas_us_avg", "wti_crude", "rbob_gasoline", "natural_gas",
+        "brent_etf", "uso_etf", "ung_etf", "usd_index", "treasury_10y",
+        "sp500", "energy_xle", "gas_midwest", "gas_gulf", "gas_east", "gas_west",
+        "crude_wti", "crude_brent", "gas_stocks", "gas_demand", "crude_stocks",
+        "cpi_energy", "cpi_gasoline", "unemployment", "gdp_growth",
+        "eia_gas_us_regular", "eia_gas_us_midgrade", "eia_gas_us_premium",
+        "eia_gas_us_diesel", "eia_gas_stocks_total", "eia_crude_stocks",
+        "eia_total_pet_stocks", "eia_gas_demand", "eia_total_pet_demand",
+        "eia_refinery_util", "eia_crude_input_mbbl", "eia_crude_imports",
+        "eia_gas_imports", "gas_us_live",
+        "gas_east_coast", "gas_midwest", "gas_gulf_coast", "gas_west_coast",
+        "gas_rocky_mtn",
     }
-    return models
 
+    feature_cols = [
+        c for c in df.columns
+        if not any(c.startswith(p) for p in exclude_prefixes)
+        and c not in exclude_cols
+        and not c.startswith("regime_prob_")
+    ]
 
-# ── Data loading ───────────────────────────────────────────────────────────────
+    X_df = df[["week_date"] + feature_cols].copy()
+    X_df["target_gas_price"] = y.values
 
-def load_features(part1_dir: Path) -> Tuple[pd.DataFrame, pd.Series]:
-    matrix_path = part1_dir / "gas_feature_matrix.parquet"
-    target_path  = part1_dir / "gas_target.parquet"
-
-    if not matrix_path.exists():
-        raise FileNotFoundError(f"Feature matrix not found: {matrix_path}")
-    if not target_path.exists():
-        raise FileNotFoundError(f"Target not found: {target_path}")
-
-    X = pd.read_parquet(matrix_path)
-    y_df = pd.read_parquet(target_path)
-
-    X["week_date"] = pd.to_datetime(X["week_date"])
-    y = y_df["target_gas_price"]
-
-    # Live-row contract (Audit 2026-08): Part 1 now ships trailing rows whose
-    # targets are not yet realized, flagged is_live=1. Older matrices without
-    # the flag are treated as all-labeled for backward compatibility.
-    if "is_live" not in X.columns:
-        X = X.copy()
-        X["is_live"] = 0
-    return X, y
-
-
-NON_FEATURE_COLS = ("week_date", "is_live")
-
-
-def get_feature_cols(X: pd.DataFrame) -> List[str]:
-    return [c for c in X.columns if c not in NON_FEATURE_COLS]
-
-
-def split_labeled_live(
-    X: pd.DataFrame, y: pd.Series,
-) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
-    """Split into (labeled X, labeled y, live X). Live rows have no target yet."""
-    labeled_mask = (X["is_live"].values == 0) & y.notna().values
-    X_lab = X.loc[labeled_mask].reset_index(drop=True)
-    y_lab = y.loc[labeled_mask].reset_index(drop=True)
-    X_live = X.loc[X["is_live"].values == 1].reset_index(drop=True)
-    return X_lab, y_lab, X_live
-
-
-# ── Walk-forward training ──────────────────────────────────────────────────────
-
-def walk_forward_train(
-    X: pd.DataFrame,
-    y: pd.Series,
-    cfg: Part2Config,
-) -> Tuple[Dict[str, object], Dict[str, float], pd.DataFrame]:
-    """
-    Out-of-sample validation on the COMMON GATE WINDOW, then refit on all
-    labeled rows for the live forecast.
-
-    FIX (Audit 2026-08):
-      - The docstring/signature previously disagreed (declared 3-tuple,
-        returned 4). Corrected: returns
-        (fitted_models, ensemble_weights, flat_val_metrics, oof_df, val_start_idx).
-      - The validation window is now the LAST cfg.val_weeks labeled rows.
-        This window is the shared sleeve-gate contract: Part 2, Part 2b, and
-        Part 2a all score on the same trailing 52 labeled weeks, so the
-        inverse-RMSE gates in Part 3 compare like with like. The previous
-        version validated on an early-2000s window while the sleeves used
-        different splits — the gate RMSEs were not comparable.
-
-    X and y must already be labeled-rows-only (no live rows).
-    """
-    feature_cols = get_feature_cols(X)
-    X_vals = X[feature_cols].values
-    y_vals = y.values
-    dates  = X["week_date"].values
-    n = len(y_vals)
-
-    models = build_models(cfg)
-    val_preds: Dict[str, List[float]] = {m: [] for m in models}
-
-    # Common gate window: last val_weeks labeled rows.
-    val_len = min(cfg.val_weeks, max(1, int(n * 0.25)))
-    train_end = n - val_len
-    val_end   = n
-    if train_end < cfg.min_train_weeks:
-        print(f"[Part2] WARN: Only {train_end} training rows "
-              f"(recommended >= {cfg.min_train_weeks}).")
-
-    print(f"[Part2] Common gate window: train 0:{train_end}, val {train_end}:{val_end} "
-          f"(last {val_len} labeled weeks)")
-
-    Xtr = X_vals[:train_end]
-    ytr = y_vals[:train_end]
-    Xval = X_vals[train_end:val_end]
-    yval = y_vals[train_end:val_end]
-
-    for name, model in models.items():
-        print(f"[Part2] Training {name}...")
-        model.fit(Xtr, ytr)
-        val_pred = model.predict(Xval)
-        val_preds[name] = val_pred.tolist()
-
-    val_actuals = yval.tolist()
-    val_dates   = [pd.Timestamp(d) for d in dates[train_end:val_end]]
-
-    # Compute per-model validation metrics
-    val_metrics: Dict[str, Dict] = {}
-    val_rmses: Dict[str, float] = {}
-    for name, preds in val_preds.items():
-        m = compute_metrics(np.array(val_actuals), np.array(preds))
-        val_metrics[name] = m
-        val_rmses[name] = m["rmse"]
-        print(f"  [Part2] {name} val RMSE: {m['rmse']:.4f} | MAE: {m['mae']:.4f} | "
-              f"MAPE: {m['mape']:.2f}% | DirAcc: {m['dir_acc']:.3f}")
-
-    # Compute ensemble weights
-    if cfg.ensemble_weighting == "val_rmse":
-        # Inverse RMSE weighting
-        inv_rmse = {
-            k: 1.0 / v for k, v in val_rmses.items()
-            if v is not None and np.isfinite(v) and v > 0
-        }
-        total = sum(inv_rmse.values())
-        weights = {k: v / total for k, v in inv_rmse.items()}
+    # FIX (Live-row contract, Audit 2026-08):
+    # The previous version dropped EVERY row whose target was NaN. Because the
+    # target is gas_us_avg.shift(-horizon), the MOST RECENT week always has a
+    # NaN target — its "next week" price does not exist yet. Dropping it meant
+    # Part 2 / 2a / 2b predicted on the last *labeled* row, whose outcome was
+    # already known: the system never produced a genuine next-week forecast.
+    #
+    # New contract (mirrors PriceCall's locked live contract):
+    #   - Interior rows with NaN targets (data gaps) are still dropped.
+    #   - TRAILING rows with NaN targets are kept and flagged is_live=1.
+    #   - Downstream sleeves train on is_live=0 rows only and predict the
+    #     last is_live row for the true next-week forecast.
+    target_notna = X_df["target_gas_price"].notna().values
+    if target_notna.any():
+        last_labeled_pos = int(np.max(np.where(target_notna)[0]))
     else:
-        n_m = len(models)
-        weights = {k: 1.0 / n_m for k in models}
+        last_labeled_pos = -1
 
-    print(f"[Part2] Ensemble weights: { {k: f'{v:.3f}' for k, v in weights.items()} }")
+    is_live = np.zeros(len(X_df), dtype=int)
+    is_live[last_labeled_pos + 1:] = 1  # everything after the last labeled row
 
-    # Re-fit on ALL labeled data so the live forecast uses every realized week.
-    print("[Part2] Re-fitting on all labeled data for the live forecast...")
-    for name, model in models.items():
-        model.fit(X_vals, y_vals)
+    interior_nan = (~target_notna) & (is_live == 0)
+    n_dropped = int(interior_nan.sum())
+    if n_dropped:
+        print(f"[Part1] Dropped {n_dropped} interior rows with missing targets")
+    keep_mask = ~interior_nan
+    X_df = X_df.loc[keep_mask].reset_index(drop=True)
+    is_live = is_live[keep_mask]
 
-    # OOF predictions DataFrame (val window)
-    oof_df = pd.DataFrame({
-        "week_date": val_dates,
-        "actual": val_actuals,
-    })
-    for name, preds in val_preds.items():
-        oof_df[f"pred_{name}"] = preds
+    X_df["is_live"] = is_live
+    y_clean = X_df.pop("target_gas_price")
 
-    oof_ensemble = np.zeros(len(val_actuals))
-    for name, w in weights.items():
-        oof_ensemble += w * np.array(val_preds[name])
-    oof_df["pred_ensemble"] = oof_ensemble
-    oof_df["weights_json"] = json.dumps(weights)
-
-    # Ensemble metrics on the common gate window — this is the number Part 2b
-    # and Part 2a gate against, so it must exist under an "ensemble" key.
-    ens_metrics = compute_metrics(np.array(val_actuals), oof_ensemble)
-    print(f"[Part2] ENSEMBLE val RMSE: {ens_metrics['rmse']:.4f} | "
-          f"MAE: {ens_metrics['mae']:.4f} | MAPE: {ens_metrics['mape']:.2f}%")
-
-    # Flatten val_metrics for return
-    flat_val_metrics: Dict[str, float] = {}
-    for model_name, m in val_metrics.items():
-        for metric_name, val in m.items():
-            flat_val_metrics[f"{model_name}_{metric_name}"] = float(val) if val is not None else np.nan
-    for metric_name, val in ens_metrics.items():
-        flat_val_metrics[f"ensemble_{metric_name}"] = float(val) if val is not None else np.nan
-
-    return models, weights, flat_val_metrics, oof_df, train_end
-
-
-# ── Live prediction ────────────────────────────────────────────────────────────
-
-def predict_latest(
-    X_lab: pd.DataFrame,
-    X_live: pd.DataFrame,
-    models: Dict[str, object],
-    weights: Dict[str, float],
-) -> Tuple[Dict[str, float], pd.Timestamp, bool]:
-    """
-    Predict the live row — the genuine next-week forecast.
-
-    FIX (Live-row contract, Audit 2026-08): the previous version predicted on
-    the last row of the labeled matrix, i.e. a week whose target price was
-    already realized. It never produced an actual forward forecast. Now the
-    live row (target not yet realized) is preferred; the last labeled row is
-    only used as a retrospective fallback when no live row exists.
-
-    Returns (preds, forecast_anchor_week, is_true_live_forecast).
-    """
-    feature_cols = get_feature_cols(X_lab)
-    if len(X_live):
-        anchor = X_live.iloc[[-1]]
-        is_true_live = True
+    n_live = int(is_live.sum())
+    n_labeled = len(X_df) - n_live
+    print(f"[Part1] Feature matrix: {len(X_df)} rows x {len(feature_cols)} features "
+          f"({n_labeled} labeled + {n_live} live)")
+    if n_live == 0:
+        print("[Part1] WARN: No live row present — the latest week already has a "
+              "realized target. The 'latest forecast' will be retrospective.")
     else:
-        anchor = X_lab.iloc[[-1]]
-        is_true_live = False
-        print("[Part2] WARN: No live row — forecast is retrospective "
-              "(its target week is already realized).")
-
-    anchor_week = pd.to_datetime(anchor["week_date"].iloc[0])
-    latest_row = anchor[feature_cols].values
-
-    preds: Dict[str, float] = {}
-    for name, model in models.items():
-        try:
-            preds[f"pred_{name}"] = float(model.predict(latest_row)[0])
-        except Exception as e:
-            print(f"[Part2] {name} prediction failed: {e}")
-            preds[f"pred_{name}"] = np.nan
-
-    # Per-forecast weight renormalization over the models that succeeded —
-    # a single failed model must not drag the ensemble toward zero.
-    num = 0.0
-    den = 0.0
-    for name in models:
-        v = preds.get(f"pred_{name}", np.nan)
-        if np.isfinite(v):
-            w = weights.get(name, 0.0)
-            num += w * v
-            den += w
-    preds["pred_ensemble"] = float(num / den) if den > 0 else np.nan
-    return preds, anchor_week, is_true_live
-
-
-# ── Full forecast tape ─────────────────────────────────────────────────────────
-
-def build_forecast_tape(
-    X_lab: pd.DataFrame,
-    y_lab: pd.Series,
-    X_live: pd.DataFrame,
-    models: Dict[str, object],
-    weights: Dict[str, float],
-    val_start_idx: int,
-) -> pd.DataFrame:
-    """
-    Generate predictions for all rows (labeled + live) for historical analysis.
-
-    FIX (Audit 2026-08):
-      - Live rows are included with actual=NaN and in_sample=0.
-      - in_sample flags rows the final models were trained on. Since the
-        final refit uses ALL labeled rows, every labeled row is in-sample —
-        honest OOS history lives in the OOF file (common gate window, flagged
-        here too via oos_val=1 for convenience).
-      - Ensemble fusion previously used fillna(0), which dragged the fused
-        value toward zero wherever a model failed. Now weights renormalize
-        per row over finite predictions only.
-    """
-    feature_cols = get_feature_cols(X_lab)
-    n_lab, n_live = len(X_lab), len(X_live)
-    all_X = pd.concat([X_lab, X_live], ignore_index=True) if n_live else X_lab
-    actual = np.concatenate([y_lab.values, np.full(n_live, np.nan)]) if n_live else y_lab.values
-
-    tape = pd.DataFrame({"week_date": all_X["week_date"], "actual": actual})
-    tape["in_sample"] = np.concatenate([np.ones(n_lab, dtype=int),
-                                        np.zeros(n_live, dtype=int)])
-    oos_val = np.zeros(len(tape), dtype=int)
-    oos_val[val_start_idx:n_lab] = 1  # common gate window rows
-    tape["oos_val"] = oos_val
-    tape["is_live"] = np.concatenate([np.zeros(n_lab, dtype=int),
-                                      np.ones(n_live, dtype=int)])
-
-    for name, model in models.items():
-        try:
-            tape[f"pred_{name}"] = model.predict(all_X[feature_cols].values)
-        except Exception as e:
-            print(f"[Part2] Full tape {name} failed: {e}")
-            tape[f"pred_{name}"] = np.nan
-
-    # Per-row renormalized weighted ensemble over finite predictions
-    pred_matrix = np.column_stack([
-        tape[f"pred_{name}"].values if f"pred_{name}" in tape.columns
-        else np.full(len(tape), np.nan)
-        for name in models
-    ])
-    w_vec = np.array([weights.get(name, 0.0) for name in models])
-    finite = np.isfinite(pred_matrix)
-    w_row = finite * w_vec[None, :]
-    w_sum = w_row.sum(axis=1)
-    fused = np.where(
-        w_sum > 0,
-        np.nansum(np.where(finite, pred_matrix, 0.0) * w_row, axis=1) / np.where(w_sum > 0, w_sum, 1.0),
-        np.nan,
-    )
-    tape["pred_ensemble"] = fused
-
-    return tape
+        live_weeks = X_df.loc[X_df['is_live'] == 1, 'week_date']
+        print(f"[Part1] Live forecast row(s): {[str(d.date()) for d in live_weeks]}")
+    return X_df, y_clean
 
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 
-def write_part2_summary(
+def write_part1_summary(
     out_dir: Path,
-    latest_preds: Dict[str, float],
-    val_metrics: Dict[str, float],
-    weights: Dict[str, float],
-    latest_week: pd.Timestamp,
-    cfg: Part2Config,
-    naive_metrics: Dict[str, float],
-    is_true_live: bool,
+    X_df: pd.DataFrame,
+    y: pd.Series,
+    cfg: Part1Config,
 ) -> None:
-    target_week = latest_week + pd.Timedelta(weeks=1)
+    feature_nan_rates = {
+        col: float(X_df[col].isna().mean())
+        for col in X_df.columns if col not in ("week_date", "is_live")
+    }
+    high_nan = {k: v for k, v in feature_nan_rates.items() if v > 0.10}
+
+    # Target stats over LABELED rows only (live rows have NaN targets by design)
+    y_labeled = y[X_df["is_live"].values == 0] if "is_live" in X_df.columns else y
+    n_live = int(X_df["is_live"].sum()) if "is_live" in X_df.columns else 0
+    live_weeks = (
+        [str(d.date()) for d in X_df.loc[X_df["is_live"] == 1, "week_date"]]
+        if n_live else []
+    )
+
     summary = {
         "script_version": SCRIPT_VERSION,
         "run_utc": datetime.now(timezone.utc).isoformat(),
-        "forecast_anchor_week": latest_week.strftime("%Y-%m-%d"),
-        "forecast_target_week": target_week.strftime("%Y-%m-%d"),
-        "is_true_live_forecast": bool(is_true_live),
-        "latest_predictions": {k: (round(v, 4) if np.isfinite(v) else None)
-                               for k, v in latest_preds.items()},
-        "ensemble_weights": weights,
-        "val_metrics": {k: round(v, 4) if np.isfinite(v) else None
-                        for k, v in val_metrics.items()},
-        "naive_baseline_metrics": {k: (round(v, 4) if isinstance(v, float) and np.isfinite(v) else None)
-                                   for k, v in naive_metrics.items()},
-        "config": {
-            "val_weeks": cfg.val_weeks,
-            "min_train_weeks": cfg.min_train_weeks,
-            "ensemble_weighting": cfg.ensemble_weighting,
-            "gate_window": "last_val_weeks_labeled_rows",
+        "n_weeks": len(X_df),
+        "n_labeled_rows": int(len(X_df) - n_live),
+        "n_live_rows": n_live,
+        "live_week_dates": live_weeks,
+        "n_features": len([c for c in X_df.columns if c not in ("week_date", "is_live")]),
+        "feature_names": [c for c in X_df.columns if c not in ("week_date", "is_live")],
+        "target_col": "target_gas_price",
+        "target_mean": float(y_labeled.mean()),
+        "target_std": float(y_labeled.std()),
+        "target_min": float(y_labeled.min()),
+        "target_max": float(y_labeled.max()),
+        "date_range": {
+            "start": str(X_df["week_date"].min().date()),
+            "end": str(X_df["week_date"].max().date()),
         },
+        "high_nan_features": high_nan,
+        "horizon_weeks": cfg.horizon_weeks,
     }
-    path = out_dir / "gas_part2_summary.json"
+    path = out_dir / "part1_summary.json"
     with open(path, "w") as f:
         json.dump(summary, f, indent=2, default=str)
-    print(f"[Part2] Summary -> {path}")
+    print(f"[Part1] Summary -> {path}")
+    if high_nan:
+        print(f"[Part1] WARN: {len(high_nan)} features with >10% NaN: "
+              f"{list(high_nan.keys())[:5]}...")
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> int:
-    cfg = Part2Config()
+    cfg = Part1Config()
     root = resolve_project_root(cfg)
     out_dir = root / cfg.out_dir_name
     out_dir.mkdir(parents=True, exist_ok=True)
-    part1_dir = root / cfg.part1_dir_name
+    part0_dir = root / cfg.part0_dir_name
+    part6_dir = root / cfg.part6_dir_name
 
     os.environ.setdefault("GASPRICE_ROOT", str(root))
-    print(f"[Part2] ROOT: {root}")
-    print(f"[Part2] Version: {SCRIPT_VERSION}\n")
+    print(f"[Part1] ROOT: {root}")
+    print(f"[Part1] Version: {SCRIPT_VERSION}\n")
 
-    # Load features
-    try:
-        X, y = load_features(part1_dir)
-    except FileNotFoundError as e:
-        print(f"[Part2] FATAL: {e}. Run gas_part1 first.")
+    # Load master
+    master_path = part0_dir / "gas_weekly_master.parquet"
+    if not master_path.exists():
+        print(f"[Part1] FATAL: {master_path} not found. Run gas_part0 first.")
         return 1
 
-    X_lab, y_lab, X_live = split_labeled_live(X, y)
-    print(f"[Part2] Features: {len(X_lab)} labeled + {len(X_live)} live rows x "
-          f"{len(get_feature_cols(X))} features")
-    print(f"[Part2] Target: ${y_lab.min():.3f} - ${y_lab.max():.3f}/gal\n")
+    master_df = pd.read_parquet(master_path)
+    print(f"[Part1] Master: {len(master_df)} rows x {master_df.shape[1]} cols")
 
-    # Out-of-sample validation on the common gate window + final refit
-    models, weights, val_metrics, oof_df, val_start_idx = walk_forward_train(
-        X_lab, y_lab, cfg
-    )
+    # Load regime tape (optional)
+    regime_tape: Optional[pd.DataFrame] = None
+    regime_path = part6_dir / "gas_regime_tape.parquet"
+    if regime_path.exists():
+        regime_tape = pd.read_parquet(regime_path)
+        print(f"[Part1] Regime tape: {len(regime_tape)} rows")
+    else:
+        print(f"[Part1] WARN: Regime tape not found at {regime_path}")
 
-    # Full forecast tape (labeled + live rows)
-    tape = build_forecast_tape(X_lab, y_lab, X_live, models, weights, val_start_idx)
+    # Build feature matrix
+    X_df, y = build_feature_matrix(master_df, regime_tape, cfg)
 
-    # Live next-week forecast
-    latest_preds, latest_week, is_true_live = predict_latest(
-        X_lab, X_live, models, weights
-    )
-    target_week = latest_week + pd.Timedelta(weeks=1)
-    live_tag = "LIVE" if is_true_live else "RETROSPECTIVE"
-    print(f"\n[Part2] {live_tag} forecast — anchored on week of {latest_week.date()}, "
-          f"targeting week of {target_week.date()}:")
-    for k, v in latest_preds.items():
-        if np.isfinite(v):
-            print(f"  {k}: ${v:.3f}/gal")
+    n_labeled = int((X_df["is_live"] == 0).sum()) if "is_live" in X_df.columns else len(X_df)
+    if n_labeled < cfg.min_clean_rows:
+        print(f"[Part1] FATAL: Only {n_labeled} labeled rows (min {cfg.min_clean_rows}).")
+        return 1
 
-    # Naive baseline for comparison (labeled rows)
-    naive_metrics = naive_baseline_metrics(y_lab.values)
-    print(f"\n[Part2] Naive baseline RMSE: {naive_metrics['rmse']:.4f} | "
-          f"MAE: {naive_metrics['mae']:.4f}")
+    # Write outputs
+    X_path = out_dir / "gas_feature_matrix.parquet"
+    X_df.to_parquet(X_path, index=False)
+    print(f"[Part1] Feature matrix -> {X_path}")
 
-    # Write artifacts
-    tape_path = out_dir / "gas_forecast_tape.parquet"
-    tape.to_parquet(tape_path, index=False)
-    tape.to_csv(out_dir / "gas_forecast_tape.csv", index=False)
-    print(f"[Part2] Forecast tape -> {tape_path}")
+    y_path = out_dir / "gas_target.parquet"
+    y_df = pd.DataFrame({"week_date": X_df["week_date"], "target_gas_price": y.values})
+    y_df.to_parquet(y_path, index=False)
+    print(f"[Part1] Target -> {y_path}")
 
-    oof_path = out_dir / "gas_oof_predictions.parquet"
-    oof_df.to_parquet(oof_path, index=False)
-    print(f"[Part2] OOF predictions -> {oof_path}")
+    # Combined CSV
+    combined = X_df.copy()
+    combined["target_gas_price"] = y.values
+    combined.to_csv(out_dir / "gas_feature_matrix.csv", index=False)
 
-    # Save models
-    model_path = out_dir / "gas_part2_models.pkl"
-    with open(model_path, "wb") as f:
-        pickle.dump({"models": models, "weights": weights}, f)
-    print(f"[Part2] Models -> {model_path}")
+    write_part1_summary(out_dir, X_df, y, cfg)
 
-    write_part2_summary(out_dir, latest_preds, val_metrics, weights,
-                        latest_week, cfg, naive_metrics, is_true_live)
-
-    print("\n[Part2] Forecaster ensemble complete.")
+    y_lab = y[X_df["is_live"].values == 0] if "is_live" in X_df.columns else y
+    print(f"\n[Part1] Feature matrix: {len(X_df)} rows x "
+          f"{len([c for c in X_df.columns if c not in ('week_date', 'is_live')])} features")
+    print(f"[Part1] Target range: ${y_lab.min():.3f} - ${y_lab.max():.3f}/gal")
+    print(f"[Part1] Target mean: ${y_lab.mean():.3f}/gal")
+    print("\n[Part1] Feature builder complete.")
     return 0
 
 
