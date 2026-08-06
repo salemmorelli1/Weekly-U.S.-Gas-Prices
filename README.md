@@ -1,4 +1,4 @@
-# ⛽ GasPriceForecast
+# GasPriceForecast
 
 > **Weekly U.S. average regular gas price forecasting model.**
 > Ensemble of sklearn, XGBoost, and LSTM sleeves fused via inverse-RMSE weighting.
@@ -9,7 +9,7 @@
 
 ---
 
-## 📊 Live Dashboard
+## Live Dashboard
 
 [**→ View Dashboard**](https://YOUR_USERNAME.github.io/GasPriceForecast/)
 
@@ -23,7 +23,7 @@ The dashboard shows:
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 gas_part0   ─── FRED + yfinance weekly data (WTI, RBOB, FRED gas prices)
