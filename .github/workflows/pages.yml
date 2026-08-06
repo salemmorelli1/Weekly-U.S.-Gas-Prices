@@ -1,16 +1,33 @@
 name: Deploy GitHub Pages
 
+# FIX (Audit 2026-08): two defects prevented the dashboard from ever showing
+# live data:
+#   1. The `paths:` filter did not match `artifacts_part*/` or `data/**`, so
+#      the weekly production commit (which touches only those paths) never
+#      triggered a redeploy — the dashboard stayed frozen at whatever was
+#      deployed manually (PriceCall S60 F1 failure mode, path-filter variant).
+#   2. Nothing copied the files index.html fetches (gas_part2_summary.json,
+#      prediction_log.csv, ...) into the site, so every data fetch 404'd.
+#      The production workflow now stages them into data/, and this build
+#      copies data/* FLAT into the site root, matching the dashboard's
+#      flat-filename fetch paths.
+# Also added the configure-pages step (enablement: true) from the reference
+# project so the first deploy works without manual Pages setup.
+
 on:
   push:
     branches: ["main"]
     paths:
       - "index.html"
       - "assets/**"
-      - ".github/workflows/pages.yml"
       - "data/**"
-      - "artifacts/**"
-      - "*.csv"
-      - "*.json"
+      - "artifacts_part2/**"
+      - "artifacts_part2a/**"
+      - "artifacts_part2b/**"
+      - "artifacts_part3/**"
+      - "artifacts_part6/**"
+      - "artifacts_part9/**"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
@@ -35,6 +52,11 @@ jobs:
       - name: Check out repo
         uses: actions/checkout@v5
 
+      - name: Set up Pages
+        uses: actions/configure-pages@v6
+        with:
+          enablement: true
+
       - name: Prepare static site
         shell: bash
         run: |
@@ -54,13 +76,31 @@ jobs:
             cp -r assets _site/assets
           fi
 
+          # Dashboard data: copy FLAT into the site root — index.html fetches
+          # "gas_part3_summary.json", "prediction_log.csv", etc. with no
+          # directory prefix. data/ is populated by the production and
+          # backfill workflows from the committed artifact directories.
           if [ -d data ]; then
             cp -r data _site/data
+            cp data/* _site/ 2>/dev/null || true
           fi
 
-          if [ -d artifacts ]; then
-            cp -r artifacts _site/artifacts
-          fi
+          # Fallback for repos where the workflows haven't staged data/ yet:
+          # pull the dashboard files straight from the committed artifacts.
+          for f in \
+            artifacts_part2/gas_part2_summary.json \
+            artifacts_part2b/gas_part2b_summary.json \
+            artifacts_part2a/gas_part2a_summary.json \
+            artifacts_part3/gas_part3_summary.json \
+            artifacts_part3/prediction_log.csv \
+            artifacts_part6/gas_regime_meta.json \
+            artifacts_part9/live_attribution_report.json
+          do
+            if [ -f "$f" ] && [ ! -f "_site/$(basename "$f")" ]; then
+              cp "$f" _site/
+              echo "Staged from artifacts: $f"
+            fi
+          done
 
           if [ -f favicon.ico ]; then
             cp favicon.ico _site/favicon.ico
@@ -72,7 +112,7 @@ jobs:
           find _site -maxdepth 4 -type f | sort
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
