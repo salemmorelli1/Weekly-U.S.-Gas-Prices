@@ -367,8 +367,13 @@ def assess_model_health(
     if drift.get("drift_detected"):
         issues.append(f"Concept drift: {drift.get('status')} "
                       f"(RMSE ratio {drift.get('rmse_ratio')})")
-        if drift.get("status") == "STOP_SIGNAL" and status != "STOP_SIGNAL":
+        # FIX (Audit 2026-08): a WARNING-level drift previously added an issue
+        # but never changed health_status, so the dashboard showed HEALTHY
+        # while drift was flagged. Both drift tiers now escalate status.
+        if drift.get("status") == "STOP_SIGNAL":
             status = "STOP_SIGNAL"
+        elif drift.get("status") == "WARNING" and status == "HEALTHY":
+            status = "WARNING"
 
     dm_interp = dm_result.get("dm_interpretation", "")
     if dm_interp == "MODEL_WORSE_THAN_NAIVE":
@@ -440,13 +445,15 @@ def main() -> int:
         print(f"[Part9] Only {n} realized rows (min {cfg.min_realized_n}). "
               "Metrics will have limited statistical power.")
 
-    # All-time metrics
+    # All-time metrics (guard NaN — early live history has < 2 realized rows)
     all_time = compute_all_time_metrics(df)
+    def _fmt(v, spec, suffix=""):
+        return (format(v, spec) + suffix) if isinstance(v, float) and np.isfinite(v) else "N/A"
     print(f"\n[Part9] All-time metrics:")
-    print(f"  MAE:     ${all_time['mae']:.4f}/gal")
-    print(f"  RMSE:    ${all_time['rmse']:.4f}/gal")
-    print(f"  MAPE:    {all_time['mape']:.2f}%")
-    print(f"  Dir Acc: {all_time['dir_acc']:.1%}")
+    print(f"  MAE:     ${_fmt(all_time['mae'], '.4f')}/gal")
+    print(f"  RMSE:    ${_fmt(all_time['rmse'], '.4f')}/gal")
+    print(f"  MAPE:    {_fmt(all_time['mape'], '.2f', '%')}")
+    print(f"  Dir Acc: {_fmt(all_time['dir_acc'], '.1%')}")
 
     # Rolling metrics
     rolling = compute_rolling_metrics(df, cfg.rolling_windows)
@@ -454,13 +461,13 @@ def main() -> int:
     for window, m in rolling.items():
         n_w = m.get("n", 0)
         if n_w > 0:
-            print(f"  {window} | n={n_w} | MAE=${m['mae']:.4f} | "
-                  f"MAPE={m['mape']:.2f}% | DirAcc={m['dir_acc']:.1%}")
+            print(f"  {window} | n={n_w} | MAE=${_fmt(m['mae'], '.4f')} | "
+                  f"MAPE={_fmt(m['mape'], '.2f', '%')} | DirAcc={_fmt(m['dir_acc'], '.1%')}")
 
     # Naive benchmark
     naive = compute_naive_metrics(df)
     print(f"\n[Part9] Naive carry benchmark:")
-    print(f"  RMSE: ${naive['rmse']:.4f}/gal | MAPE: {naive['mape']:.2f}%")
+    print(f"  RMSE: ${_fmt(naive['rmse'], '.4f')}/gal | MAPE: {_fmt(naive['mape'], '.2f', '%')}")
 
     # Diebold-Mariano test
     y_true = df["actual"].values
