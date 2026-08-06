@@ -222,10 +222,38 @@ def fetch_gas_history_master(start: str, end: str) -> pd.Series:
 
 # ── Backfill logic ─────────────────────────────────────────────────────────────
 
-def backfill(df: pd.DataFrame, price_history: pd.Series) -> Tuple[pd.DataFrame, int, int]:
+def _lookup_price(price_map: Dict[pd.Timestamp, float],
+                  d: pd.Timestamp) -> Optional[float]:
+    """Exact-date lookup, then ±3-day tolerance for release-date drift."""
+    v = price_map.get(d)
+    if v is not None:
+        return v
+    for delta in [1, -1, 2, -2, 3, -3]:
+        candidate = d + pd.Timedelta(days=delta)
+        if candidate in price_map:
+            return price_map[candidate]
+    return None
+
+
+def backfill(
+    df: pd.DataFrame,
+    price_history: pd.Series,
+    force: bool = False,
+) -> Tuple[pd.DataFrame, int, int]:
     """
     Fill actual realized prices into matured prediction log rows.
     Returns (updated_df, matured_count, newly_backfilled_count).
+
+    FIX (Audit 2026-08):
+      - --force was parsed by the CLI but never honored; realized rows were
+        silently rewritten on every run regardless. Already-realized rows are
+        now skipped unless force=True (idempotent by default).
+      - Direction accuracy previously read the "prior" row by integer
+        position (df.at[idx - 1, ...]), assuming the log was ordered and
+        contiguous. The prior week's price now comes from the fetched EIA
+        price history itself (target_date - 7d), which is robust to log
+        gaps, re-ordering, and the target_date-sorted upsert in Part 3.
+      - Rows are processed in target_date order for deterministic output.
     """
     today = pd.Timestamp.today().normalize()
     # Build date -> price lookup
@@ -238,26 +266,36 @@ def backfill(df: pd.DataFrame, price_history: pd.Series) -> Tuple[pd.DataFrame, 
     matured_count = 0
     newly_backfilled = 0
 
-    for idx, row in df.iterrows():
+    # FIX (Audit 2026-08): pandas 2.x refuses to assign a date STRING into an
+    # all-NaN float64 column (the dtype 'actual_date' acquires on CSV
+    # round-trip when every value is empty). Ensure the columns this loop
+    # writes exist with assignment-compatible dtypes up front.
+    for col in ("actual", "mae", "rmse", "mape", "direction_correct"):
+        if col not in df.columns:
+            df[col] = np.nan
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    if "actual_date" not in df.columns:
+        df["actual_date"] = pd.Series([pd.NA] * len(df), dtype=object)
+    elif df["actual_date"].dtype != object:
+        df["actual_date"] = df["actual_date"].astype(object)
+
+    order = pd.to_datetime(df.get("target_date"), errors="coerce").sort_values().index
+    for idx in order:
+        row = df.loc[idx]
         target_date = _to_date(row.get("target_date"))
         if target_date is None or target_date > today:
             continue
 
         matured_count += 1
 
-        # Try exact date, then look within ±3 days
-        realized_price: Optional[float] = price_map.get(target_date)
-        if realized_price is None:
-            for delta in [1, -1, 2, -2, 3, -3]:
-                candidate = target_date + pd.Timedelta(days=delta)
-                if candidate in price_map:
-                    realized_price = price_map[candidate]
-                    break
+        already_done = np.isfinite(_safe_float(row.get("actual", np.nan)))
+        if already_done and not force:
+            continue
 
+        realized_price = _lookup_price(price_map, target_date)
         if realized_price is None:
             continue
 
-        already_done = np.isfinite(_safe_float(row.get("actual", np.nan)))
         df.at[idx, "actual"] = realized_price
         df.at[idx, "actual_date"] = target_date.strftime("%Y-%m-%d")
 
@@ -270,14 +308,12 @@ def backfill(df: pd.DataFrame, price_history: pd.Series) -> Tuple[pd.DataFrame, 
             if realized_price != 0:
                 df.at[idx, "mape"] = round(abs_err / abs(realized_price) * 100, 4)
 
-        # Direction accuracy (vs prior week)
-        if idx > 0:
-            prior_actual = _safe_float(df.at[idx - 1, "actual"] if "actual" in df.columns else np.nan)
-            prior_pred   = _safe_float(df.at[idx - 1, "pred_fusion"] if "pred_fusion" in df.columns else np.nan)
-            if np.isfinite(prior_actual) and np.isfinite(pred_fusion):
-                true_dir = np.sign(realized_price - prior_actual)
-                pred_dir = np.sign(pred_fusion - prior_actual)
-                df.at[idx, "direction_correct"] = float(int(true_dir == pred_dir))
+        # Direction accuracy vs the prior EIA week's realized price
+        prior_price = _lookup_price(price_map, target_date - pd.Timedelta(days=7))
+        if prior_price is not None and np.isfinite(pred_fusion):
+            true_dir = np.sign(realized_price - prior_price)
+            pred_dir = np.sign(pred_fusion - prior_price)
+            df.at[idx, "direction_correct"] = float(int(true_dir == pred_dir))
 
         if not already_done:
             newly_backfilled += 1
@@ -408,3 +444,5 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
