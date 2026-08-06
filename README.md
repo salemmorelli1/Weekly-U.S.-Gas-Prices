@@ -5,13 +5,13 @@
 > Data: EIA, FRED, CollectAPI live prices, yfinance commodities.
 > Runs automatically every Monday at 10:35 AM ET, after the EIA weekly release.
 
-[![Weekly Forecast](https://github.com/salemmorelli1/GasPriceForecast/actions/workflows/weekly-production.yml/badge.svg)](https://github.com/salemmorelli1/GasPriceForecast/actions/workflows/weekly-production.yml)
+[![Weekly Forecast](https://github.com/YOUR_USERNAME/GasPriceForecast/actions/workflows/weekly-production.yml/badge.svg)](https://github.com/YOUR_USERNAME/GasPriceForecast/actions/workflows/weekly-production.yml)
 
 ---
 
 ## 📊 Live Dashboard
 
-[**→ View Dashboard**](https://salemmorelli1.github.io/GasPriceForecast/)
+[**→ View Dashboard**](https://YOUR_USERNAME.github.io/GasPriceForecast/)
 
 The dashboard shows:
 - This week's fusion forecast vs. EIA realized prices
@@ -59,12 +59,12 @@ weeks, so the inverse-RMSE fusion gates in Part 3 compare like with like.
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
 ### 1. Clone
 
 ```bash
-git clone https://github.com/salemmorelli1/GasPriceForecast.git
+git clone https://github.com/YOUR_USERNAME/GasPriceForecast.git
 cd GasPriceForecast
 ```
 
@@ -112,7 +112,7 @@ python gas_run_weekly_prediction.py --force --with-backfill
 
 ---
 
-## Pipeline Files
+## 📁 Pipeline Files
 
 | File | Description |
 |------|-------------|
@@ -131,7 +131,7 @@ python gas_run_weekly_prediction.py --force --with-backfill
 
 ---
 
-## Artifacts
+## 📦 Artifacts
 
 All artifacts are written to subdirectories and ignored by `.gitignore`; the GitHub
 Actions workflows commit the accumulating subset with `git add -f` and stage the
@@ -149,7 +149,7 @@ dashboard's JSON/CSV copies into `data/`.
 
 ---
 
-## GitHub Actions Setup
+## ⚙️ GitHub Actions Setup
 
 Two production workflows (dual-UTC-cron pattern — GitHub ignores `timezone:` keys):
 
@@ -180,7 +180,7 @@ where `index.html` fetches them from.
 
 ---
 
-## Model Details
+## 🔮 Model Details
 
 ### Feature Families
 
@@ -222,7 +222,7 @@ The LSTM sleeve activates only when **both** gates pass:
 
 ---
 
-## Google Colab Usage
+## 📊 Google Colab Usage
 
 All parts support Google Colab + Drive. Set `GASPRICE_ROOT` to your Drive path:
 
@@ -241,7 +241,7 @@ os.environ["COLLECTAPI_KEY"] = "your_key"
 
 ---
 
-## Backfilling Realized Prices
+## 📈 Backfilling Realized Prices
 
 EIA releases weekly gas prices every Monday morning. The `weekly-backfill.yml`
 workflow runs each Wednesday (2 days of publication buffer); locally:
@@ -262,7 +262,7 @@ The backfill script:
 
 ---
 
-## Validation
+## 🧪 Validation
 
 After accumulating at least 8 weeks of realized predictions, `gas_part9` will compute:
 
@@ -281,7 +281,7 @@ Health thresholds:
 
 ---
 
-## Environment Variables
+## 🔑 Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -292,3 +292,11 @@ Health thresholds:
 
 ---
 
+## 📜 License
+
+MIT — see LICENSE for details.
+
+---
+
+*Built following the same architecture as [PriceCallProject](https://github.com/YOUR_USERNAME/PriceCallProject)
+but targeting gas price regression rather than equity tail risk classification.*

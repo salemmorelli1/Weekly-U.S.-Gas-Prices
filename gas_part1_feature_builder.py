@@ -127,14 +127,26 @@ def add_volatility_features(df: pd.DataFrame, col: str, windows: Tuple[int, ...]
     """Rolling realized volatility (std of weekly returns)."""
     ret = df[col].pct_change(1).shift(1)
     for w in windows:
+        # FIX (Audit 2026-08): min_periods must never exceed the window —
+        # max(2, w // 2) raised ValueError for w=1 windows. std() needs >= 2
+        # observations, so windows < 2 are skipped.
+        if w < 2:
+            continue
         df[f"{col}_vol_{w}w"] = ret.rolling(w, min_periods=max(2, w // 2)).std()
     return df
 
 
 def add_momentum_features(df: pd.DataFrame, col: str, windows: Tuple[int, ...]) -> pd.DataFrame:
-    """Price momentum: current price relative to rolling mean."""
+    """Price momentum: current price relative to rolling mean.
+
+    FIX (Audit 2026-08): min_periods=max(2, w // 2) raised
+    "ValueError: min_periods 2 must be <= window 1" for the w=1 momentum
+    window in the default config — Part 1 could never complete a run.
+    min_periods is now clamped to the window size.
+    """
     for w in windows:
-        roll_mean = df[col].shift(1).rolling(w, min_periods=max(2, w // 2)).mean()
+        mp = min(w, max(1, w // 2))
+        roll_mean = df[col].shift(1).rolling(w, min_periods=mp).mean()
         df[f"{col}_mom_{w}w"] = (df[col].shift(1) / roll_mean.replace(0, np.nan)) - 1.0
     return df
 
@@ -361,14 +373,48 @@ def build_feature_matrix(
     X_df = df[["week_date"] + feature_cols].copy()
     X_df["target_gas_price"] = y.values
 
-    # Drop rows where target is NaN (forecast horizon cutoff)
-    n_before = len(X_df)
-    X_df = X_df.dropna(subset=["target_gas_price"])
-    print(f"[Part1] Dropped {n_before - len(X_df)} rows at forecast horizon cutoff")
+    # FIX (Live-row contract, Audit 2026-08):
+    # The previous version dropped EVERY row whose target was NaN. Because the
+    # target is gas_us_avg.shift(-horizon), the MOST RECENT week always has a
+    # NaN target — its "next week" price does not exist yet. Dropping it meant
+    # Part 2 / 2a / 2b predicted on the last *labeled* row, whose outcome was
+    # already known: the system never produced a genuine next-week forecast.
+    #
+    # New contract (mirrors PriceCall's locked live contract):
+    #   - Interior rows with NaN targets (data gaps) are still dropped.
+    #   - TRAILING rows with NaN targets are kept and flagged is_live=1.
+    #   - Downstream sleeves train on is_live=0 rows only and predict the
+    #     last is_live row for the true next-week forecast.
+    target_notna = X_df["target_gas_price"].notna().values
+    if target_notna.any():
+        last_labeled_pos = int(np.max(np.where(target_notna)[0]))
+    else:
+        last_labeled_pos = -1
 
+    is_live = np.zeros(len(X_df), dtype=int)
+    is_live[last_labeled_pos + 1:] = 1  # everything after the last labeled row
+
+    interior_nan = (~target_notna) & (is_live == 0)
+    n_dropped = int(interior_nan.sum())
+    if n_dropped:
+        print(f"[Part1] Dropped {n_dropped} interior rows with missing targets")
+    keep_mask = ~interior_nan
+    X_df = X_df.loc[keep_mask].reset_index(drop=True)
+    is_live = is_live[keep_mask]
+
+    X_df["is_live"] = is_live
     y_clean = X_df.pop("target_gas_price")
 
-    print(f"[Part1] Feature matrix: {len(X_df)} rows x {len(feature_cols)} features")
+    n_live = int(is_live.sum())
+    n_labeled = len(X_df) - n_live
+    print(f"[Part1] Feature matrix: {len(X_df)} rows x {len(feature_cols)} features "
+          f"({n_labeled} labeled + {n_live} live)")
+    if n_live == 0:
+        print("[Part1] WARN: No live row present — the latest week already has a "
+              "realized target. The 'latest forecast' will be retrospective.")
+    else:
+        live_weeks = X_df.loc[X_df['is_live'] == 1, 'week_date']
+        print(f"[Part1] Live forecast row(s): {[str(d.date()) for d in live_weeks]}")
     return X_df, y_clean
 
 
@@ -382,21 +428,32 @@ def write_part1_summary(
 ) -> None:
     feature_nan_rates = {
         col: float(X_df[col].isna().mean())
-        for col in X_df.columns if col != "week_date"
+        for col in X_df.columns if col not in ("week_date", "is_live")
     }
     high_nan = {k: v for k, v in feature_nan_rates.items() if v > 0.10}
+
+    # Target stats over LABELED rows only (live rows have NaN targets by design)
+    y_labeled = y[X_df["is_live"].values == 0] if "is_live" in X_df.columns else y
+    n_live = int(X_df["is_live"].sum()) if "is_live" in X_df.columns else 0
+    live_weeks = (
+        [str(d.date()) for d in X_df.loc[X_df["is_live"] == 1, "week_date"]]
+        if n_live else []
+    )
 
     summary = {
         "script_version": SCRIPT_VERSION,
         "run_utc": datetime.now(timezone.utc).isoformat(),
         "n_weeks": len(X_df),
-        "n_features": len([c for c in X_df.columns if c != "week_date"]),
-        "feature_names": [c for c in X_df.columns if c != "week_date"],
+        "n_labeled_rows": int(len(X_df) - n_live),
+        "n_live_rows": n_live,
+        "live_week_dates": live_weeks,
+        "n_features": len([c for c in X_df.columns if c not in ("week_date", "is_live")]),
+        "feature_names": [c for c in X_df.columns if c not in ("week_date", "is_live")],
         "target_col": "target_gas_price",
-        "target_mean": float(y.mean()),
-        "target_std": float(y.std()),
-        "target_min": float(y.min()),
-        "target_max": float(y.max()),
+        "target_mean": float(y_labeled.mean()),
+        "target_std": float(y_labeled.std()),
+        "target_min": float(y_labeled.min()),
+        "target_max": float(y_labeled.max()),
         "date_range": {
             "start": str(X_df["week_date"].min().date()),
             "end": str(X_df["week_date"].max().date()),
@@ -448,8 +505,9 @@ def main() -> int:
     # Build feature matrix
     X_df, y = build_feature_matrix(master_df, regime_tape, cfg)
 
-    if len(X_df) < cfg.min_clean_rows:
-        print(f"[Part1] FATAL: Only {len(X_df)} clean rows (min {cfg.min_clean_rows}).")
+    n_labeled = int((X_df["is_live"] == 0).sum()) if "is_live" in X_df.columns else len(X_df)
+    if n_labeled < cfg.min_clean_rows:
+        print(f"[Part1] FATAL: Only {n_labeled} labeled rows (min {cfg.min_clean_rows}).")
         return 1
 
     # Write outputs
@@ -469,10 +527,11 @@ def main() -> int:
 
     write_part1_summary(out_dir, X_df, y, cfg)
 
+    y_lab = y[X_df["is_live"].values == 0] if "is_live" in X_df.columns else y
     print(f"\n[Part1] Feature matrix: {len(X_df)} rows x "
-          f"{len([c for c in X_df.columns if c != 'week_date'])} features")
-    print(f"[Part1] Target range: ${y.min():.3f} - ${y.max():.3f}/gal")
-    print(f"[Part1] Target mean: ${y.mean():.3f}/gal")
+          f"{len([c for c in X_df.columns if c not in ('week_date', 'is_live')])} features")
+    print(f"[Part1] Target range: ${y_lab.min():.3f} - ${y_lab.max():.3f}/gal")
+    print(f"[Part1] Target mean: ${y_lab.mean():.3f}/gal")
     print("\n[Part1] Feature builder complete.")
     return 0
 
