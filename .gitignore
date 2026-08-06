@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Notebook / Colab / editor
+.ipynb_checkpoints/
+*.ipynb
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs / temp
+*.log
+*.tmp
+*.temp
+logs/
+
+# Test / cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+
+# Local secrets / env
+.env
+.env.*
+secrets.json
+
+# Generated artifacts — do not track rebuildable outputs.
+# The GitHub Actions workflows deliberately commit the accumulating subset
+# (prediction_log.csv, summary JSONs, model pickles, live attribution) with
+# `git add -f`, which overrides these rules. Everything else stays local.
+artifacts_part0/
+artifacts_part1/
+artifacts_part2/
+artifacts_part2a/
+artifacts_part2b/
+artifacts_part3/
+artifacts_part6/
+artifacts_part9/
+
+# NOTE: data/ is intentionally NOT ignored — it holds the committed copies
+# of the dashboard's JSON/CSV files served by GitHub Pages.
+
+# Common generated data formats inside local runs
+*.parquet
+*.duckdb
+*.pkl
+*.pt
+
