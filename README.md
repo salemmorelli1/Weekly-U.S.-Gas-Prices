@@ -2,7 +2,7 @@
 
 > **Weekly U.S. average regular gas price forecasting model.**
 > Ensemble of sklearn, XGBoost, and LSTM sleeves fused via inverse-RMSE weighting.
-> Data: EIA, FRED, CollectAPI live prices, yfinance commodities.
+> Data: EIA, FRED, OilPriceAPI live commodity prices, yfinance.
 > Runs automatically every Monday at 10:35 AM ET, after the EIA weekly release.
 
 [![Weekly Forecast](https://github.com/YOUR_USERNAME/GasPriceForecast/actions/workflows/weekly-production.yml/badge.svg)](https://github.com/YOUR_USERNAME/GasPriceForecast/actions/workflows/weekly-production.yml)
@@ -27,7 +27,7 @@ The dashboard shows:
 
 ```
 gas_part0   ─── FRED + yfinance weekly data (WTI, RBOB, FRED gas prices)
-gas_part0b  ─── CollectAPI live gas prices by region + weather severity
+gas_part0b  ─── OilPriceAPI live commodity snapshot (WTI/Brent/RBOB/NG)
 gas_part0c  ─── EIA API v2 direct (stocks, demand, refinery utilization)
     ↓
 gas_part6   ─── HMM regime engine (4 regimes: NORMAL / SUPPLY_SHOCK / DEMAND_SURGE / DEFLATION)
@@ -88,9 +88,9 @@ All three API keys are **free**:
 export FRED_API_KEY="your_fred_key"
 # ↳ Free at: https://fred.stlouisfed.org/docs/api/api_key.html
 
-# Optional (live weekly gas prices by region + weather)
-export COLLECTAPI_KEY="your_collectapi_key"
-# ↳ Free at: https://collectapi.com  (subscribe to Gas Prices + Weather APIs)
+# Optional (live commodity snapshot: WTI, Brent, RBOB, natgas, diesel)
+export OILPRICEAPI_KEY="your_oilpriceapi_key"
+# ↳ Free at: https://www.oilpriceapi.com  (200 requests/month, no credit card)
 
 # Optional (direct EIA series for stocks, demand, refinery util)
 export EIA_API_KEY="your_eia_key"
@@ -117,7 +117,7 @@ python gas_run_weekly_prediction.py --force --with-backfill
 | File | Description |
 |------|-------------|
 | `gas_part0_data_infrastructure.py` | Core data: FRED + yfinance, DuckDB store |
-| `gas_part0b_collectapi_fetcher.py` | Live gas prices by region (CollectAPI) |
+| `gas_part0b_oilpriceapi_fetcher.py` | Live commodity snapshot (OilPriceAPI) |
 | `gas_part0c_eia_fetcher.py` | EIA weekly petroleum data (API v2) |
 | `gas_part6_regime_engine.py` | HMM regime detection (4 states) |
 | `gas_part1_feature_builder.py` | Feature engineering (lags, seasonal, crack spread, macro) |
@@ -165,7 +165,7 @@ Two production workflows (dual-UTC-cron pattern — GitHub ignores `timezone:` k
 |--------|----------|-------------|
 | `FRED_API_KEY` | ✅ Yes | Core gas price + macro data |
 | `EIA_API_KEY` | ⚪ Optional | EIA stocks, demand, refinery data |
-| `COLLECTAPI_KEY` | ⚪ Optional | Live regional gas prices + weather |
+| `OILPRICEAPI_KEY` | ⚪ Optional | Live commodity snapshot (WTI/Brent/RBOB/NG) |
 
 ### Enable GitHub Pages
 
@@ -231,11 +231,11 @@ import os
 os.environ["GASPRICE_ROOT"] = "/content/drive/MyDrive/GasPriceForecast"
 os.environ["FRED_API_KEY"] = "your_key"
 os.environ["EIA_API_KEY"] = "your_key"
-os.environ["COLLECTAPI_KEY"] = "your_key"
+os.environ["OILPRICEAPI_KEY"] = "your_key"
 
 # Then run each part:
 %run gas_part0_data_infrastructure.py
-%run gas_part0b_collectapi_fetcher.py
+%run gas_part0b_oilpriceapi_fetcher.py
 # ... etc.
 ```
 
@@ -288,7 +288,7 @@ Health thresholds:
 | `GASPRICE_ROOT` | ✅ | Project root directory |
 | `FRED_API_KEY` | ✅ | FRED API key for gas price + macro data |
 | `EIA_API_KEY` | ⚪ | EIA API v2 key for petroleum supply data |
-| `COLLECTAPI_KEY` | ⚪ | CollectAPI key for live regional prices + weather |
+| `OILPRICEAPI_KEY` | ⚪ | OilPriceAPI key for live commodity snapshot |
 
 ---
 

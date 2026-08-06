@@ -79,7 +79,7 @@ os.environ.setdefault("GASPRICE_ROOT", str(PROJECT_DIR))
 
 CANONICAL_FILES: Dict[str, str] = {
     "PART0":  "gas_part0_data_infrastructure.py",
-    "PART0B": "gas_part0b_collectapi_fetcher.py",
+    "PART0B": "gas_part0b_oilpriceapi_fetcher.py",
     "PART0C": "gas_part0c_eia_fetcher.py",
     "PART1":  "gas_part1_feature_builder.py",
     "PART2":  "gas_part2_forecaster.py",
@@ -174,7 +174,7 @@ def run_pipeline(
     project_dir: Path,
     with_backfill: bool = False,
     skip_lstm: bool = False,
-    skip_collectapi: bool = False,
+    skip_live_prices: bool = False,
 ) -> int:
     common_env = {
         "GASPRICE_ROOT": str(project_dir),
@@ -186,15 +186,15 @@ def run_pipeline(
     print("(* optional / non-blocking)\n")
 
     # FIX (Audit 2026-08): the GitHub workflow has always passed --skip-lstm
-    # and --skip-collectapi, but the runner silently discarded them via
+    # and --skip-live-prices, but the runner silently discarded them via
     # parse_known_args — the toggles in the workflow_dispatch UI did nothing.
     skipped_by_flag = set()
     if skip_lstm:
         skipped_by_flag.add("PART2A")
         print("[Runner] --skip-lstm: PART2A (LSTM sleeve) will be skipped.")
-    if skip_collectapi:
+    if skip_live_prices:
         skipped_by_flag.add("PART0B")
-        print("[Runner] --skip-collectapi: PART0B (CollectAPI) will be skipped.")
+        print("[Runner] --skip-live-prices: PART0B (OilPriceAPI) will be skipped.")
 
     for label in PIPELINE_ORDER:
         script_name = CANONICAL_FILES.get(label)
@@ -269,9 +269,15 @@ def main() -> int:
         help="Skip the Part 2a LSTM sleeve (faster run).",
     )
     parser.add_argument(
+        "--skip-live-prices",
+        action="store_true",
+        help="Skip Part 0b OilPriceAPI live commodity snapshot.",
+    )
+    parser.add_argument(
         "--skip-collectapi",
         action="store_true",
-        help="Skip Part 0b CollectAPI live prices.",
+        help="Deprecated alias for --skip-live-prices (CollectAPI was "
+             "replaced by OilPriceAPI in Audit 2026-08).",
     )
     parser.add_argument(
         "--retrain",
@@ -323,7 +329,7 @@ def main() -> int:
         PROJECT_DIR,
         with_backfill=args.with_backfill,
         skip_lstm=args.skip_lstm,
-        skip_collectapi=args.skip_collectapi,
+        skip_live_prices=args.skip_live_prices or args.skip_collectapi,
     )
 
     if rc != 0:

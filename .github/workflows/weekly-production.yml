@@ -38,7 +38,7 @@ name: Weekly Gas Price Forecast
 # Secrets required (Settings → Secrets → Actions):
 #   FRED_API_KEY      free at https://fred.stlouisfed.org/docs/api/api_key.html
 #   EIA_API_KEY       free at https://www.eia.gov/opendata/register.php
-#   COLLECTAPI_KEY    free at https://collectapi.com
+#   OILPRICEAPI_KEY   free at https://www.oilpriceapi.com (200 req/month)
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -57,8 +57,8 @@ on:
         required: false
         default: false
         type: boolean
-      skip_collectapi:
-        description: "Skip Part 0b CollectAPI live prices"
+      skip_live_prices:
+        description: "Skip Part 0b OilPriceAPI live commodity snapshot"
         required: false
         default: false
         type: boolean
@@ -77,7 +77,7 @@ env:
   GASPRICE_ROOT: ${{ github.workspace }}
   FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
   EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
-  COLLECTAPI_KEY: ${{ secrets.COLLECTAPI_KEY }}
+  OILPRICEAPI_KEY: ${{ secrets.OILPRICEAPI_KEY }}
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   PYTHONUNBUFFERED: "1"
 
@@ -227,10 +227,10 @@ jobs:
             echo "Flag: --skip-lstm"
           fi
 
-          SKIP_COLLECTAPI="${{ github.event.inputs.skip_collectapi || 'false' }}"
-          if [ "$SKIP_COLLECTAPI" = "true" ]; then
-            ARGS="$ARGS --skip-collectapi"
-            echo "Flag: --skip-collectapi"
+          SKIP_LIVE="${{ github.event.inputs.skip_live_prices || 'false' }}"
+          if [ "$SKIP_LIVE" = "true" ]; then
+            ARGS="$ARGS --skip-live-prices"
+            echo "Flag: --skip-live-prices"
           fi
 
           echo "args=${ARGS}" >> "$GITHUB_OUTPUT"
@@ -255,10 +255,10 @@ jobs:
             echo "EIA_API_KEY:    set"
           fi
 
-          if [ -z "$COLLECTAPI_KEY" ]; then
-            echo "::warning::COLLECTAPI_KEY not set — Part 0b live regional prices will be skipped."
+          if [ -z "$OILPRICEAPI_KEY" ]; then
+            echo "::warning::OILPRICEAPI_KEY not set — Part 0b live commodity snapshot will be skipped."
           else
-            echo "COLLECTAPI_KEY: set"
+            echo "OILPRICEAPI_KEY: set"
           fi
 
       # ── 9. Create artifact directories ───────────────────────────────────
