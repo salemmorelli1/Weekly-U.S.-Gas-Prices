@@ -1,0 +1,67 @@
+{
+  "script_version": "GAS_PART2_V1_CANONICAL",
+  "run_utc": "2026-08-10T15:33:53.988190+00:00",
+  "forecast_anchor_week": "2026-08-03",
+  "forecast_target_week": "2026-08-10",
+  "is_true_live_forecast": true,
+  "latest_predictions": {
+    "pred_hgb": 4.0289,
+    "pred_rf": 3.857,
+    "pred_gbm": 3.9812,
+    "pred_elasticnet": 3.8378,
+    "pred_ridge": 3.9469,
+    "pred_ensemble": 3.9373
+  },
+  "ensemble_weights": {
+    "hgb": 0.20390090229492372,
+    "rf": 0.1582649404097838,
+    "gbm": 0.21563660153198883,
+    "elasticnet": 0.1785038887702694,
+    "ridge": 0.24369366699303432
+  },
+  "val_metrics": {
+    "hgb_mae": 0.1454,
+    "hgb_rmse": 0.1953,
+    "hgb_mape": 4.3498,
+    "hgb_r2": 0.8728,
+    "hgb_dir_acc": 0.549,
+    "rf_mae": 0.1822,
+    "rf_rmse": 0.2516,
+    "rf_mape": 5.2771,
+    "rf_r2": 0.7889,
+    "rf_dir_acc": 0.5686,
+    "gbm_mae": 0.1281,
+    "gbm_rmse": 0.1847,
+    "gbm_mape": 3.8469,
+    "gbm_r2": 0.8863,
+    "gbm_dir_acc": 0.5882,
+    "elasticnet_mae": 0.1541,
+    "elasticnet_rmse": 0.2231,
+    "elasticnet_mape": 4.3321,
+    "elasticnet_r2": 0.8341,
+    "elasticnet_dir_acc": 0.6078,
+    "ridge_mae": 0.1058,
+    "ridge_rmse": 0.1634,
+    "ridge_mape": 2.9846,
+    "ridge_r2": 0.911,
+    "ridge_dir_acc": 0.5882,
+    "ensemble_mae": 0.1279,
+    "ensemble_rmse": 0.1865,
+    "ensemble_mape": 3.7199,
+    "ensemble_r2": 0.884,
+    "ensemble_dir_acc": 0.5882
+  },
+  "naive_baseline_metrics": {
+    "mae": 0.0428,
+    "rmse": 0.0618,
+    "mape": 1.6645,
+    "r2": 0.9935,
+    "dir_acc": 0.6751
+  },
+  "config": {
+    "val_weeks": 52,
+    "min_train_weeks": 156,
+    "ensemble_weighting": "val_rmse",
+    "gate_window": "last_val_weeks_labeled_rows"
+  }
+}

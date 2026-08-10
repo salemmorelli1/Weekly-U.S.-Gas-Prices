@@ -1,0 +1,20 @@
+{
+  "script_version": "GAS_PART3_V1_CANONICAL",
+  "run_utc": "2026-08-10T15:34:56.131038+00:00",
+  "active_sleeves": [
+    "part2"
+  ],
+  "fusion_weights": {
+    "part2": 1.0
+  },
+  "latest_prediction": {
+    "decision_date": "2026-08-10",
+    "target_date": "2026-08-10",
+    "anchor_week": "2026-08-03",
+    "is_live_forecast": 1,
+    "pred_fusion": 3.9373,
+    "confidence": "LOW_CONF",
+    "regime": "SUPPLY_SHOCK_3"
+  },
+  "prediction_log_rows": 1
+}
