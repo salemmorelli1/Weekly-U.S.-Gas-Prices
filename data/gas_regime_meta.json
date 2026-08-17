@@ -1,0 +1,33 @@
+{
+  "script_version": "GAS_PART6_V1_CANONICAL",
+  "run_utc": "2026-08-17T15:51:57.898289+00:00",
+  "model_type": "HMM",
+  "n_regimes": 4,
+  "regime_map": {
+    "0": "NORMAL",
+    "2": "SUPPLY_SHOCK",
+    "1": "NORMAL_1",
+    "3": "NORMAL_3"
+  },
+  "selected_features": [
+    "gas_ret_1w",
+    "gas_ret_4w",
+    "gas_vol_8w",
+    "crude_ret_1w",
+    "crude_ret_4w",
+    "rbob_ret_1w",
+    "eia_gas_demand_trend",
+    "crack_spread_z",
+    "gas_price_level_z",
+    "usd_index_ret_4w"
+  ],
+  "n_train_rows": 1342,
+  "regime_distribution": {
+    "NORMAL": 1077,
+    "SUPPLY_SHOCK": 249,
+    "NORMAL_1": 62,
+    "NORMAL_3": 1
+  },
+  "latest_regime": "SUPPLY_SHOCK",
+  "latest_week": "2026-08-10"
+}

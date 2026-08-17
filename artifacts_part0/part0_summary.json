@@ -1,0 +1,35 @@
+{
+  "script_version": "GAS_PART0_V1_CANONICAL",
+  "run_utc": "2026-08-17T15:50:56.301182+00:00",
+  "n_weeks": 1389,
+  "n_columns": 19,
+  "columns": [
+    "week_date",
+    "brent_etf",
+    "wti_crude",
+    "usd_index",
+    "natural_gas",
+    "rbob_gasoline",
+    "ung_etf",
+    "uso_etf",
+    "energy_xle",
+    "sp500",
+    "treasury_10y",
+    "gas_us_avg",
+    "gas_midwest",
+    "crude_wti",
+    "crude_brent",
+    "cpi_energy",
+    "cpi_gasoline",
+    "unemployment",
+    "gdp_growth"
+  ],
+  "schema_hash": "5e0c4b318772",
+  "freshness": {
+    "latest_week": "2026-08-10",
+    "age_days": 7,
+    "n_weeks": 1389,
+    "has_min_history": true,
+    "freshness_status": "OK"
+  }
+}

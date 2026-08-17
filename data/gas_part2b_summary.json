@@ -1,0 +1,21 @@
+{
+  "script_version": "GAS_PART2B_V1_CANONICAL",
+  "run_utc": "2026-08-17T15:52:30.911223+00:00",
+  "xgb_sleeve_recommended": false,
+  "xgb_val_rmse": 0.1940975655030635,
+  "baseline_val_rmse": 0.1864,
+  "xgb_metrics": {
+    "val_rmse": 0.1941,
+    "val_mae": 0.14,
+    "val_mape": 4.1919,
+    "n_configs": 3
+  },
+  "latest_forecast": {
+    "anchor_week": "2026-08-10",
+    "target_week": "2026-08-17",
+    "pred_xgb": 3.791,
+    "is_true_live_forecast": true
+  },
+  "n_configs_trained": 3,
+  "gate_window": "last_val_weeks_labeled_rows"
+}
