@@ -1,6 +1,6 @@
 {
   "script_version": "GAS_PART2A_LSTM_V1_CANONICAL",
-  "run_utc": "2026-08-17T14:59:02.142470+00:00",
+  "run_utc": "2026-08-17T15:53:13.339408+00:00",
   "lstm_sleeve_recommended": false,
   "reason": "part2b_gate_not_passed",
   "gate_detail": "xgb_sleeve_recommended=False (source=/home/runner/work/Weekly-U.S.-Gas-Prices/Weekly-U.S.-Gas-Prices/artifacts_part2b/gas_part2b_summary.json)"

@@ -1,6 +1,6 @@
 {
   "script_version": "GAS_PART9_V1_CANONICAL",
-  "run_utc": "2026-08-17T14:59:04.085300+00:00",
+  "run_utc": "2026-08-17T15:53:15.250557+00:00",
   "n_realized": 0,
   "health_status": "INSUFFICIENT_DATA",
   "message": "No realized rows in prediction log yet."

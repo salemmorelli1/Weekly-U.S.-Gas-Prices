@@ -1,6 +1,6 @@
 {
   "script_version": "GAS_PART3_V1_CANONICAL",
-  "run_utc": "2026-08-17T14:59:03.022736+00:00",
+  "run_utc": "2026-08-17T15:53:14.197242+00:00",
   "active_sleeves": [
     "part2"
   ],
@@ -12,7 +12,7 @@
     "target_date": "2026-08-17",
     "anchor_week": "2026-08-10",
     "is_live_forecast": 1,
-    "pred_fusion": 3.7772,
+    "pred_fusion": 3.7758,
     "confidence": "LOW_CONF",
     "regime": "SUPPLY_SHOCK"
   },
