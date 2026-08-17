@@ -1,6 +1,6 @@
 {
   "script_version": "GAS_PART3_V1_CANONICAL",
-  "run_utc": "2026-08-10T16:26:08.560396+00:00",
+  "run_utc": "2026-08-17T14:59:03.022736+00:00",
   "active_sleeves": [
     "part2"
   ],
@@ -8,13 +8,13 @@
     "part2": 1.0
   },
   "latest_prediction": {
-    "decision_date": "2026-08-10",
-    "target_date": "2026-08-10",
-    "anchor_week": "2026-08-03",
+    "decision_date": "2026-08-17",
+    "target_date": "2026-08-17",
+    "anchor_week": "2026-08-10",
     "is_live_forecast": 1,
-    "pred_fusion": 3.9373,
+    "pred_fusion": 3.7772,
     "confidence": "LOW_CONF",
-    "regime": "SUPPLY_SHOCK_3"
+    "regime": "SUPPLY_SHOCK"
   },
-  "prediction_log_rows": 1
+  "prediction_log_rows": 2
 }

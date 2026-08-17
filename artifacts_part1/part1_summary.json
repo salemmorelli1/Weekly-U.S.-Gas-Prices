@@ -1,11 +1,11 @@
 {
   "script_version": "GAS_PART1_V1_CANONICAL",
-  "run_utc": "2026-08-10T16:24:58.055233+00:00",
-  "n_weeks": 1388,
-  "n_labeled_rows": 1387,
+  "run_utc": "2026-08-17T14:57:46.706386+00:00",
+  "n_weeks": 1389,
+  "n_labeled_rows": 1388,
   "n_live_rows": 1,
   "live_week_dates": [
-    "2026-08-03"
+    "2026-08-10"
   ],
   "n_features": 102,
   "feature_names": [
@@ -108,18 +108,18 @@
     "eia_days_supply",
     "eia_days_supply_z",
     "regime_NORMAL",
-    "regime_NORMAL_2",
-    "regime_SUPPLY_SHOCK",
-    "regime_SUPPLY_SHOCK_3"
+    "regime_NORMAL_1",
+    "regime_NORMAL_3",
+    "regime_SUPPLY_SHOCK"
   ],
   "target_col": "target_gas_price",
-  "target_mean": 2.6115407354001436,
-  "target_std": 0.7683929325132132,
+  "target_mean": 2.612443083573487,
+  "target_std": 0.7688511989901624,
   "target_min": 1.042,
   "target_max": 4.844,
   "date_range": {
     "start": "2000-01-03",
-    "end": "2026-08-03"
+    "end": "2026-08-10"
   },
   "high_nan_features": {},
   "horizon_weeks": 1
