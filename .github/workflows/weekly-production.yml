@@ -431,6 +431,12 @@ jobs:
           git push origin HEAD:"${GITHUB_REF_NAME}"
           echo "Artifacts committed and pushed."
 
+      - name: Trigger Pages deploy
+        if: success()
+        run: gh workflow run pages.yml --ref "${{ github.ref_name }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       # ── 16. Upload artifacts to GitHub Actions UI ────────────────────────
       # Kept as a secondary backup; the primary record is the git commit above.
       - name: Upload artifacts to GitHub Actions UI
