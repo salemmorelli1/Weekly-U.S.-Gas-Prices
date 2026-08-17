@@ -163,7 +163,7 @@
       <h1>⛽ <span>GasPrice</span>Forecast</h1>
       <p>Weekly U.S. average regular gas price forecasting model.
          Ensemble of sklearn, XGBoost, and LSTM sleeves — fused via inverse-RMSE weighting.
-         EIA data + CollectAPI live prices + FRED macro.
+         EIA data + FRED macro.
          Runs every Monday after EIA release (~10 AM ET).</p>
     </div>
     <div class="controls">
@@ -359,7 +359,7 @@
   </div>
 
   <footer>
-    GasPriceForecast &nbsp;|&nbsp; Data: EIA, FRED, CollectAPI, yfinance &nbsp;|&nbsp;
+    GasPriceForecast &nbsp;|&nbsp; Data: EIA, FRED, yfinance &nbsp;|&nbsp;
     Pipeline: sklearn + XGBoost + LSTM &nbsp;|&nbsp;
     Runs weekly Monday ~10am ET &nbsp;|&nbsp;
     <a href="https://github.com" target="_blank">GitHub</a>
@@ -428,7 +428,7 @@ function parseCSV(text) {
     const obj = {};
     headers.forEach((h, i) => {
       const v = (vals[i] || "").trim().replace(/^"|"$/g, "");
-      obj[h] = isNaN(v) || v === "" ? v : parseFloat(v);
+      obj[h] = v === "" ? NaN : (isNaN(v) ? v : parseFloat(v));
     });
     return obj;
   });
