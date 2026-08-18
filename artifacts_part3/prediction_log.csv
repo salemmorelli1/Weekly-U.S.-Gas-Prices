@@ -1,3 +1,3 @@
 decision_date,target_date,week_date,is_live_forecast,pred_fusion,pred_part2,pred_part2b,pred_part2a,actual,actual_date,mae,rmse,mape,direction_correct,confidence,regime_label,sleeve_spread_pct,schema_version,run_utc
 2026-08-10,2026-08-10,2026-08-03,1,3.9373,3.9373,,,,,,,,,LOW_CONF,SUPPLY_SHOCK_3,0.0,V1_WEEKLY,2026-08-10T16:26:08.547142+00:00
-2026-08-17,2026-08-17,2026-08-10,1,3.7772,3.7772,,,,,,,,,LOW_CONF,SUPPLY_SHOCK,0.0,V1_WEEKLY,2026-08-17T23:57:15.271101+00:00
+2026-08-18,2026-08-17,2026-08-10,1,3.7758,3.7758,,,,,,,,,LOW_CONF,SUPPLY_SHOCK,0.0,V1_WEEKLY,2026-08-18T00:44:39.209423+00:00

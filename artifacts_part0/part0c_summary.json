@@ -1,6 +1,6 @@
 {
   "script_version": "GAS_PART0C_V1_CANONICAL",
-  "run_utc": "2026-08-17T23:55:58.792326+00:00",
+  "run_utc": "2026-08-18T00:43:21.318742+00:00",
   "n_weeks": 1390,
   "eia_series_fetched": 15,
   "eia_series_names": [
@@ -38,5 +38,5 @@
     "eia_gas_chg_12w": 1377
   },
   "history_start": "2000-01-01",
-  "history_end": "2026-08-17"
+  "history_end": "2026-08-18"
 }

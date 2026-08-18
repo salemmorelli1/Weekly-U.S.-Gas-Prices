@@ -1,23 +1,23 @@
 {
   "script_version": "GAS_PART2_V1_CANONICAL",
-  "run_utc": "2026-08-17T23:56:27.663393+00:00",
+  "run_utc": "2026-08-18T00:43:51.831803+00:00",
   "forecast_anchor_week": "2026-08-10",
   "forecast_target_week": "2026-08-17",
   "is_true_live_forecast": true,
   "latest_predictions": {
-    "pred_hgb": 3.7149,
+    "pred_hgb": 3.7081,
     "pred_rf": 3.7767,
     "pred_gbm": 3.8007,
     "pred_elasticnet": 3.7832,
     "pred_ridge": 3.805,
-    "pred_ensemble": 3.7772
+    "pred_ensemble": 3.7758
   },
   "ensemble_weights": {
-    "hgb": 0.20487388549810556,
-    "rf": 0.16003243071465073,
-    "gbm": 0.21071458491290285,
-    "elasticnet": 0.17990843976341125,
-    "ridge": 0.24447065911092958
+    "hgb": 0.20487388389596087,
+    "rf": 0.16003242946317303,
+    "gbm": 0.210714583265083,
+    "elasticnet": 0.1799084383565001,
+    "ridge": 0.24447066501928294
   },
   "val_metrics": {
     "hgb_mae": 0.1477,

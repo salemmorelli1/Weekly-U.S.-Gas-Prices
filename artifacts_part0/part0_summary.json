@@ -1,6 +1,6 @@
 {
   "script_version": "GAS_PART0_V1_CANONICAL",
-  "run_utc": "2026-08-17T23:51:53.327981+00:00",
+  "run_utc": "2026-08-18T00:38:49.919391+00:00",
   "n_weeks": 1389,
   "n_columns": 19,
   "columns": [
@@ -27,7 +27,7 @@
   "schema_hash": "5e0c4b318772",
   "freshness": {
     "latest_week": "2026-08-10",
-    "age_days": 7,
+    "age_days": 8,
     "n_weeks": 1389,
     "has_min_history": true,
     "freshness_status": "OK"
