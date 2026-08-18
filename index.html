@@ -159,16 +159,16 @@
   <!-- Header -->
   <div class="header">
     <div class="title">
-      <h1>⛽ <span>GasPrice</span>Forecast</h1>
+      <h1><span>GasPrice</span>Forecast</h1>
       <p>Weekly U.S. average regular gas price forecasting model.
          Ensemble of sklearn, XGBoost, and LSTM sleeves — fused via inverse-RMSE weighting.
          EIA data + FRED macro.
          Runs every Monday after EIA release (~10 AM ET).</p>
     </div>
     <div class="controls">
-      <button class="primary" onclick="loadAll()">⟳ Refresh</button>
+      <button class="primary" onclick="loadAll()">Refresh</button>
       <button onclick="window.open('https://www.eia.gov/petroleum/gasdiesel/','_blank')">EIA Live</button>
-      <button onclick="window.open('prediction_log.csv','_blank')">📋 Prediction Log</button>
+      <button onclick="window.open('prediction_log.csv','_blank')">Prediction Log</button>
     </div>
   </div>
 
@@ -213,11 +213,11 @@
 
   <!-- Tabs -->
   <div class="tabs">
-    <button class="tab-btn active" data-tab="forecastTab">📈 Forecast</button>
-    <button class="tab-btn" data-tab="modelTab">🤖 Model Ops</button>
-    <button class="tab-btn" data-tab="liveTab">📊 Live Attribution</button>
-    <button class="tab-btn" data-tab="regimeTab">🌐 Regimes</button>
-    <button class="tab-btn" data-tab="dataTab">🗂 Data</button>
+    <button class="tab-btn active" data-tab="forecastTab">Forecast</button>
+    <button class="tab-btn" data-tab="modelTab">Model Ops</button>
+    <button class="tab-btn" data-tab="liveTab">Live Attribution</button>
+    <button class="tab-btn" data-tab="regimeTab">Regimes</button>
+    <button class="tab-btn" data-tab="dataTab">Data</button>
   </div>
 
   <!-- ── Forecast Tab ─────────────────────────────────────────────────────── -->
@@ -826,7 +826,7 @@ function updateSnapshots(predlog, part3) {
     ["MAE",           !isNaN(latest.mae) ? fmt(latest.mae) : "—"],
     ["MAPE",          !isNaN(latest.mape) ? fmtPct(latest.mape) : "—"],
     ["Direction",     latest.direction_correct !== "" && !isNaN(latest.direction_correct)
-                        ? (latest.direction_correct > 0 ? "✓ Correct" : "✗ Wrong") : "Pending"],
+                        ? (latest.direction_correct > 0 ? "Correct" : "Wrong") : "Pending"],
   ];
   document.getElementById("snapKv").innerHTML = makeKvGrid(pairs);
 }
@@ -848,7 +848,7 @@ function updateModelKv(part2, part2b, part2a, part3) {
   if (part2b) {
     const lf = part2b.latest_forecast || {};
     const p2bpairs = [
-      ["Recommended", part2b.xgb_sleeve_recommended ? "✓ YES" : "✗ NO"],
+      ["Recommended", part2b.xgb_sleeve_recommended ? "YES" : "NO"],
       ["XGB Forecast", fmt(lf.pred_xgb)],
       ["Val RMSE",     fmtNum(part2b.xgb_val_rmse)],
       ["Baseline RMSE",fmtNum(part2b.baseline_val_rmse)],
@@ -861,7 +861,7 @@ function updateModelKv(part2, part2b, part2a, part3) {
     const lf = part2a.latest_forecast || {};
     const arch = part2a.architecture || {};
     const p2apairs = [
-      ["Recommended", part2a.lstm_sleeve_recommended ? "✓ YES" : "✗ NO"],
+      ["Recommended", part2a.lstm_sleeve_recommended ? "YES" : "NO"],
       ["LSTM Forecast", fmt(lf.pred_lstm)],
       ["Val RMSE",      fmtNum(part2a.lstm_val_rmse)],
       ["Val MAPE",      fmtPct(part2a.lstm_val_mape)],
@@ -927,7 +927,7 @@ function updateLiveAttr(attr) {
     ["Recent RMSE",    fmt(drift.recent_rmse)],
     ["Historical RMSE",fmt(drift.historical_rmse)],
     ["RMSE Ratio",     fmtNum(drift.rmse_ratio, 2)],
-    ["Drift Detected", drift.drift_detected ? "⚠ YES" : "✓ NO"],
+    ["Drift Detected", drift.drift_detected ? "YES" : "NO"],
     ["Warn threshold", "1.5×"],
     ["Stop threshold", "2.0×"],
   ];
