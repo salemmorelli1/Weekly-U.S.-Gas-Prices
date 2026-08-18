@@ -65,6 +65,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
 
       # ── 2. Time gate ─────────────────────────────────────────────────────
       # Both crons fire every Wednesday; the gate passes the one landing in
@@ -295,7 +296,7 @@ jobs:
           TODAY="$(date -u '+%Y-%m-%d')"
           # [skip ci] prevents this commit from triggering a Pages redeploy loop.
           # Pages is re-deployed by the weekly production commit, not the backfill.
-          git commit -m "Backfill realized EIA gas prices — ${TODAY} [skip ci]"
+          git commit -m "Backfill realized EIA gas prices — ${TODAY}"
 
           # Pull with ours strategy so concurrent writes never conflict
           git pull origin "${GITHUB_REF_NAME}" \
@@ -305,3 +306,4 @@ jobs:
 
           git push origin HEAD:"${GITHUB_REF_NAME}"
           echo "Backfill artifacts committed and pushed."
+
