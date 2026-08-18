@@ -1,6 +1,6 @@
 {
   "script_version": "GAS_PART6_V1_CANONICAL",
-  "run_utc": "2026-08-17T15:51:57.898289+00:00",
+  "run_utc": "2026-08-17T23:56:00.971220+00:00",
   "model_type": "HMM",
   "n_regimes": 4,
   "regime_map": {
