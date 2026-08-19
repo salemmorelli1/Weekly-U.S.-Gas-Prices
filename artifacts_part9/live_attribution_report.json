@@ -1,7 +1,70 @@
 {
   "script_version": "GAS_PART9_V1_CANONICAL",
-  "run_utc": "2026-08-18T00:44:40.318857+00:00",
-  "n_realized": 0,
-  "health_status": "INSUFFICIENT_DATA",
-  "message": "No realized rows in prediction log yet."
+  "run_utc": "2026-08-19T12:57:41.315097+00:00",
+  "n_realized": 1,
+  "all_time_metrics": {
+    "mae": null,
+    "rmse": null,
+    "mape": null,
+    "dir_acc": null,
+    "n_realized": 1
+  },
+  "naive_metrics": {
+    "mae": null,
+    "rmse": null,
+    "mape": null,
+    "dir_acc": null
+  },
+  "rolling_metrics": {
+    "rolling_4w": {
+      "mae": null,
+      "rmse": null,
+      "mape": null,
+      "dir_acc": null,
+      "n": null
+    },
+    "rolling_8w": {
+      "mae": null,
+      "rmse": null,
+      "mape": null,
+      "dir_acc": null,
+      "n": null
+    },
+    "rolling_13w": {
+      "mae": null,
+      "rmse": null,
+      "mape": null,
+      "dir_acc": null,
+      "n": null
+    },
+    "rolling_26w": {
+      "mae": null,
+      "rmse": null,
+      "mape": null,
+      "dir_acc": null,
+      "n": null
+    }
+  },
+  "diebold_mariano": {
+    "dm_t_stat": NaN,
+    "dm_p_value": NaN,
+    "dm_interpretation": "INSUFFICIENT_DATA"
+  },
+  "concept_drift": {
+    "drift_detected": false,
+    "status": "INSUFFICIENT_DATA",
+    "recent_rmse": NaN,
+    "historical_rmse": NaN,
+    "rmse_ratio": NaN
+  },
+  "model_health": {
+    "health_status": "INSUFFICIENT_DATA",
+    "n_realized": 1,
+    "min_required": 8,
+    "issues": [
+      "Only 1 realized observations (min 8)"
+    ],
+    "recommendation": "Continue accumulating live data before evaluation."
+  },
+  "beats_naive_pct": 0.0
 }
