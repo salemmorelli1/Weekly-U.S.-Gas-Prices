@@ -1,25 +1,12 @@
 name: Deploy GitHub Pages
 
-# FIX (Audit 2026-08): two defects prevented the dashboard from ever showing
-# live data:
-#   1. The `paths:` filter did not match `artifacts_part*/` or `data/**`, so
-#      the weekly production commit (which touches only those paths) never
-#      triggered a redeploy — the dashboard stayed frozen at whatever was
-#      deployed manually (PriceCall S60 F1 failure mode, path-filter variant).
-#   2. Nothing copied the files index.html fetches (gas_part2_summary.json,
-#      prediction_log.csv, ...) into the site, so every data fetch 404'd.
-#      The production workflow now stages them into data/, and this build
-#      copies data/* FLAT into the site root, matching the dashboard's
-#      flat-filename fetch paths.
-# Also added the configure-pages step (enablement: true) from the reference
-# project so the first deploy works without manual Pages setup.
-
 on:
   push:
     branches: ["main"]
     paths:
       - "index.html"
       - "assets/**"
+      - "report/**"
       - "data/**"
       - "artifacts_part2/**"
       - "artifacts_part2a/**"
@@ -47,7 +34,6 @@ jobs:
     name: Build static site
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     steps:
       - name: Check out repo
         uses: actions/checkout@v5
@@ -61,32 +47,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           mkdir -p _site
 
           if [ ! -f index.html ]; then
             echo "ERROR: index.html was not found at the repository root."
-            echo "Upload index.html to the root of the repo, then rerun this workflow."
             exit 1
           fi
-
           cp index.html _site/index.html
 
           if [ -d assets ]; then
             cp -r assets _site/assets
           fi
 
-          # Dashboard data: copy FLAT into the site root — index.html fetches
-          # "gas_part3_summary.json", "prediction_log.csv", etc. with no
-          # directory prefix. data/ is populated by the production and
-          # backfill workflows from the committed artifact directories.
+          # Publish the APA report beside the interactive laboratory.
+          if [ -d report ]; then
+            cp -r report _site/report
+          fi
+
+          # Copy dashboard telemetry both under data/ and flat at the site root
+          # so older and newer index builds resolve the same committed files.
           if [ -d data ]; then
             cp -r data _site/data
             cp data/* _site/ 2>/dev/null || true
           fi
 
-          # Fallback for repos where the workflows haven't staged data/ yet:
-          # pull the dashboard files straight from the committed artifacts.
           for f in \
             artifacts_part2/gas_part2_summary.json \
             artifacts_part2b/gas_part2b_summary.json \
@@ -105,9 +89,7 @@ jobs:
           if [ -f favicon.ico ]; then
             cp favicon.ico _site/favicon.ico
           fi
-
           touch _site/.nojekyll
-
           echo "Prepared static site contents:"
           find _site -maxdepth 4 -type f | sort
 
@@ -121,11 +103,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     timeout-minutes: 10
-
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
