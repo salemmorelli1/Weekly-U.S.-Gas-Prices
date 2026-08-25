@@ -133,6 +133,49 @@
     .chart .series { fill: none; stroke: var(--cyan); stroke-width: 3; }
     .chart .series-secondary { fill: none; stroke: var(--amber); stroke-width: 2; stroke-dasharray: 7 6; }
     .chart .point { fill: var(--amber); stroke: #07101a; stroke-width: 2; }
+    .fit-card { margin: 14px 0; overflow: hidden; }
+    .fit-header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
+    .fit-header .copy { max-width: 690px; margin-bottom: 0; }
+    .fit-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 20px 0 14px; }
+    .fit-field { display: grid; gap: 7px; min-width: 180px; color: var(--muted); font-size: .78rem; }
+    .fit-field select {
+      min-height: 40px; padding: 0 34px 0 12px; color: var(--text); background: var(--panel-2);
+      border: 1px solid var(--line-strong); border-radius: 10px;
+    }
+    .range-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+    .range-button {
+      min-height: 40px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 10px;
+      background: rgba(9, 17, 27, .65); color: var(--muted); font-weight: 750; cursor: pointer;
+    }
+    .range-button[aria-pressed="true"] { color: #091017; background: var(--text); border-color: var(--text); }
+    .fit-check { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; color: var(--muted); font-size: .82rem; }
+    .fit-check input { width: 18px; height: 18px; accent-color: var(--violet); }
+    .fit-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
+    .fit-metric { padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(5, 12, 20, .58); }
+    .fit-metric span { display: block; color: var(--dim); font: 800 .64rem var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+    .fit-metric strong { display: block; margin-top: 5px; font: 700 1.18rem var(--serif); }
+    .fit-chart-wrap { position: relative; min-height: 440px; border-top: 1px solid var(--line); }
+    .fit-chart { width: 100%; min-height: 440px; display: block; touch-action: pan-y; }
+    .fit-chart text { fill: var(--muted); font: 12px var(--sans); }
+    .fit-chart .grid { stroke: var(--line); stroke-width: 1; }
+    .fit-chart .axis { stroke: var(--line-strong); stroke-width: 1; }
+    .fit-chart .actual-line { fill: none; stroke: var(--cyan); stroke-width: 2.7; }
+    .fit-chart .prediction-line { fill: none; stroke: var(--amber); stroke-width: 2.2; }
+    .fit-chart .persistence-line { fill: none; stroke: var(--violet); stroke-width: 1.6; stroke-dasharray: 7 6; opacity: .88; }
+    .fit-chart .crosshair { stroke: rgba(238, 247, 251, .62); stroke-width: 1; stroke-dasharray: 4 4; pointer-events: none; }
+    .fit-chart .hover-dot { stroke: #07101a; stroke-width: 2; pointer-events: none; }
+    .fit-tooltip {
+      position: absolute; z-index: 3; min-width: 205px; padding: 11px 12px; border: 1px solid var(--line-strong);
+      border-radius: 10px; color: var(--text); background: rgba(5, 12, 20, .96); box-shadow: var(--shadow);
+      font: .75rem/1.55 var(--mono); pointer-events: none; transform: translate(12px, -105%);
+    }
+    .fit-tooltip strong { color: var(--amber); }
+    .fit-status { display: flex; justify-content: space-between; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: .78rem; margin-top: 11px; }
+    .fit-status strong { color: var(--text); }
+    .fit-legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: .78rem; }
+    .fit-key::before { content: ""; display: inline-block; width: 20px; height: 3px; margin-right: 7px; vertical-align: middle; background: var(--cyan); }
+    .fit-key.prediction::before { background: var(--amber); }
+    .fit-key.persistence::before { height: 2px; background: var(--violet); }
     .legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: .78rem; margin: 5px 0 14px; }
     .legend span::before { content: ""; display: inline-block; width: 18px; height: 3px; background: var(--cyan); margin-right: 7px; vertical-align: middle; }
     .legend span.secondary::before { background: var(--amber); }
@@ -180,6 +223,8 @@
       .metric-grid { grid-template-columns: repeat(2, 1fr); }
       .grid-2, .report-hero { grid-template-columns: 1fr; }
       .grid-3 { grid-template-columns: 1fr; }
+      .fit-header { display: block; }
+      .fit-metrics { grid-template-columns: repeat(2, 1fr); }
       .regime-layout { grid-template-columns: 1fr; }
       .report-cover { max-width: 410px; }
     }
@@ -194,6 +239,7 @@
       .metric-grid { grid-template-columns: 1fr 1fr; }
       .metric:last-child { grid-column: 1 / -1; }
       .scenario-output { grid-template-columns: 1fr; }
+      .fit-chart-wrap, .fit-chart { min-height: 360px; }
       footer { flex-direction: column; }
     }
     @media (max-width: 460px) {
@@ -204,6 +250,8 @@
       .pump-base { transform: translateX(-50%) scale(.82); }
       .hose, .nozzle { opacity: .7; }
       .model-row { grid-template-columns: 90px 1fr 62px; }
+      .fit-metrics { grid-template-columns: 1fr 1fr; }
+      .fit-field { width: 100%; }
     }
     @media (prefers-reduced-motion: reduce) {
       html { scroll-behavior: auto; }
@@ -236,7 +284,7 @@
         </div>
         <div class="hero-actions">
           <button class="btn primary" type="button" data-open-tab="lab">Open scenario lab</button>
-          <button class="btn" type="button" data-open-tab="validation">Inspect validation</button>
+          <button class="btn" type="button" id="openFitChart">Actual vs. predicted</button>
         </div>
       </div>
       <div class="hero-visual" aria-label="Animated gasoline pump and orbiting market signals">
@@ -272,6 +320,57 @@
         <article class="metric"><div class="metric-label">Persistence RMSE</div><div class="metric-value">$0.112</div><div class="metric-note">Recomputed on same dates</div></article>
         <article class="metric"><div class="metric-label">Live evidence</div><div class="metric-value" id="liveCount">1</div><div class="metric-note">Realized case · inference pending</div></article>
       </div>
+      <article class="card fit-card" id="fitExplorer">
+        <div class="fit-header">
+          <div>
+            <div class="card-kicker">All 1,389 weekly rows · January 2000–August 2026</div>
+            <h2>Actual price versus model path.</h2>
+          </div>
+          <p class="copy">Move across the chart to inspect any week. Change the model or shorten the time window to see where the fitted path follows the observed retail price—and where it misses.</p>
+        </div>
+        <div class="fit-toolbar" aria-label="Actual versus predicted chart controls">
+          <label class="fit-field" for="fitModel">Prediction series
+            <select id="fitModel">
+              <option value="pred_ensemble">Core ensemble</option>
+              <option value="pred_ridge">Ridge</option>
+              <option value="pred_hgb">Histogram gradient boosting</option>
+              <option value="pred_gbm">Gradient boosting</option>
+              <option value="pred_rf">Random forest</option>
+              <option value="pred_elasticnet">Elastic net</option>
+            </select>
+          </label>
+          <div class="fit-field"><span>Visible history</span><div class="range-buttons" id="fitRanges">
+            <button class="range-button" type="button" data-fit-range="all" aria-pressed="true">All</button>
+            <button class="range-button" type="button" data-fit-range="520" aria-pressed="false">10 years</button>
+            <button class="range-button" type="button" data-fit-range="260" aria-pressed="false">5 years</button>
+            <button class="range-button" type="button" data-fit-range="104" aria-pressed="false">2 years</button>
+            <button class="range-button" type="button" data-fit-range="52" aria-pressed="false">52 weeks</button>
+          </div></div>
+          <label class="fit-check"><input id="showPersistence" type="checkbox" checked> Show previous-week persistence</label>
+        </div>
+        <div class="fit-metrics" aria-live="polite">
+          <div class="fit-metric"><span>Displayed rows</span><strong id="fitN">Loading…</strong></div>
+          <div class="fit-metric"><span>Descriptive MAE</span><strong id="fitMae">—</strong></div>
+          <div class="fit-metric"><span>Descriptive RMSE</span><strong id="fitRmse">—</strong></div>
+          <div class="fit-metric"><span>Correlation</span><strong id="fitCorrelation">—</strong></div>
+        </div>
+        <div class="fit-legend" aria-hidden="true">
+          <span class="fit-key">Actual retail price</span>
+          <span class="fit-key prediction" id="predictionLegend">Core ensemble</span>
+          <span class="fit-key persistence">Previous-week persistence</span>
+        </div>
+        <div class="fit-chart-wrap" id="fitChartWrap">
+          <svg id="fitChart" class="fit-chart" viewBox="0 0 1120 430" role="img" aria-labelledby="fitTitle fitDesc">
+            <title id="fitTitle">Weekly actual and predicted gasoline prices</title>
+            <desc id="fitDesc">All available weekly actual gasoline prices and fitted core-ensemble values from January 2000 through August 2026. Move across the chart to inspect individual weeks.</desc>
+          </svg>
+          <div class="fit-tooltip" id="fitTooltip" hidden></div>
+        </div>
+        <div class="fit-status">
+          <span id="fitDataStatus"><strong>Loading committed forecast tape…</strong></span>
+          <span><strong>Interpretation boundary:</strong> the full-history model lines are post-refit diagnostics, not honest out-of-sample forecasts. Use the Validation tab for effectiveness claims.</span>
+        </div>
+      </article>
       <div class="grid-2">
         <article class="card">
           <div class="card-kicker">Twenty-seven-year context</div>
@@ -470,6 +569,191 @@
       }).join("");
     }
 
+    const fitModels = {
+      pred_ensemble: "Core ensemble",
+      pred_ridge: "Ridge",
+      pred_hgb: "Histogram gradient boosting",
+      pred_gbm: "Gradient boosting",
+      pred_rf: "Random forest",
+      pred_elasticnet: "Elastic net"
+    };
+    let fitRows = [];
+    let fitRange = "all";
+
+    function parseForecastCsv(text) {
+      const lines = text.trim().split(/\r?\n/);
+      const header = lines.shift().split(",");
+      return lines.map(line => {
+        const cells = line.split(",");
+        const row = Object.fromEntries(header.map((name, index) => [name, cells[index]]));
+        const parsed = { week_date: row.week_date, date: new Date(row.week_date + "T00:00:00Z") };
+        ["actual", "pred_hgb", "pred_rf", "pred_gbm", "pred_elasticnet", "pred_ridge", "pred_ensemble"].forEach(key => {
+          const value = Number(row[key]);
+          parsed[key] = row[key] !== "" && Number.isFinite(value) ? value : null;
+        });
+        return parsed;
+      }).filter(row => Number.isFinite(row.date.getTime()));
+    }
+
+    function chartPath(rows, valueFor, x, y) {
+      let path = "";
+      let open = false;
+      rows.forEach((row, index) => {
+        const value = valueFor(row, index);
+        if (Number.isFinite(value)) {
+          path += (open ? "L" : "M") + x(index).toFixed(2) + "," + y(value).toFixed(2);
+          open = true;
+        } else {
+          open = false;
+        }
+      });
+      return path;
+    }
+
+    function correlation(pairs) {
+      if (pairs.length < 2) return null;
+      const meanA = pairs.reduce((sum, pair) => sum + pair[0], 0) / pairs.length;
+      const meanB = pairs.reduce((sum, pair) => sum + pair[1], 0) / pairs.length;
+      let covariance = 0, varianceA = 0, varianceB = 0;
+      pairs.forEach(([a, b]) => {
+        covariance += (a - meanA) * (b - meanB);
+        varianceA += (a - meanA) ** 2;
+        varianceB += (b - meanB) ** 2;
+      });
+      const denominator = Math.sqrt(varianceA * varianceB);
+      return denominator > 0 ? covariance / denominator : null;
+    }
+
+    function renderFitChart() {
+      if (!fitRows.length) return;
+      const model = document.getElementById("fitModel").value;
+      const limit = fitRange === "all" ? fitRows.length : Number(fitRange);
+      const startIndex = Math.max(0, fitRows.length - limit);
+      const rows = fitRows.slice(startIndex);
+      const svg = document.getElementById("fitChart");
+      const wrap = document.getElementById("fitChartWrap");
+      const tooltip = document.getElementById("fitTooltip");
+      const ns = "http://www.w3.org/2000/svg";
+      const W = 1120, H = 430, m = { l: 58, r: 24, t: 28, b: 48 };
+      const persistence = rows.map((_, index) => {
+        const source = fitRows[startIndex + index - 1];
+        return source && Number.isFinite(source.actual) ? source.actual : null;
+      });
+      const values = [];
+      rows.forEach((row, index) => {
+        if (Number.isFinite(row.actual)) values.push(row.actual);
+        if (Number.isFinite(row[model])) values.push(row[model]);
+        if (document.getElementById("showPersistence").checked && Number.isFinite(persistence[index])) values.push(persistence[index]);
+      });
+      let yMin = Math.min(...values), yMax = Math.max(...values);
+      const padding = Math.max(.08, (yMax - yMin) * .08);
+      yMin = Math.max(0, yMin - padding); yMax += padding;
+      const x = index => m.l + index / Math.max(1, rows.length - 1) * (W - m.l - m.r);
+      const y = value => H - m.b - (value - yMin) / Math.max(.01, yMax - yMin) * (H - m.t - m.b);
+      svg.replaceChildren();
+
+      const title = document.createElementNS(ns, "title");
+      title.id = "fitTitle"; title.textContent = "Weekly actual gasoline prices and " + fitModels[model] + " values"; svg.appendChild(title);
+      const desc = document.createElementNS(ns, "desc");
+      desc.id = "fitDesc"; desc.textContent = rows.length + " weekly rows from " + rows[0].week_date + " through " + rows[rows.length - 1].week_date + "."; svg.appendChild(desc);
+      svg.setAttribute("aria-labelledby", "fitTitle fitDesc");
+
+      const ticks = 5;
+      for (let i = 0; i <= ticks; i++) {
+        const value = yMin + i / ticks * (yMax - yMin);
+        const line = document.createElementNS(ns, "line");
+        line.setAttribute("x1", m.l); line.setAttribute("x2", W - m.r); line.setAttribute("y1", y(value)); line.setAttribute("y2", y(value)); line.setAttribute("class", "grid"); svg.appendChild(line);
+        const label = document.createElementNS(ns, "text");
+        label.setAttribute("x", m.l - 10); label.setAttribute("y", y(value) + 4); label.setAttribute("text-anchor", "end"); label.textContent = "$" + value.toFixed(2); svg.appendChild(label);
+      }
+      const dateTicks = Math.min(6, rows.length - 1);
+      for (let i = 0; i <= dateTicks; i++) {
+        const index = Math.round(i / Math.max(1, dateTicks) * (rows.length - 1));
+        const label = document.createElementNS(ns, "text");
+        label.setAttribute("x", x(index)); label.setAttribute("y", H - 17); label.setAttribute("text-anchor", i === 0 ? "start" : i === dateTicks ? "end" : "middle");
+        label.textContent = rows[index].date.toLocaleDateString("en-US", { year: "numeric", month: rows.length <= 104 ? "short" : undefined, timeZone: "UTC" });
+        svg.appendChild(label);
+      }
+      const axis = document.createElementNS(ns, "line");
+      axis.setAttribute("x1", m.l); axis.setAttribute("x2", W - m.r); axis.setAttribute("y1", H - m.b); axis.setAttribute("y2", H - m.b); axis.setAttribute("class", "axis"); svg.appendChild(axis);
+
+      const actualPath = document.createElementNS(ns, "path");
+      actualPath.setAttribute("d", chartPath(rows, row => row.actual, x, y)); actualPath.setAttribute("class", "actual-line"); svg.appendChild(actualPath);
+      const predictionPath = document.createElementNS(ns, "path");
+      predictionPath.setAttribute("d", chartPath(rows, row => row[model], x, y)); predictionPath.setAttribute("class", "prediction-line"); svg.appendChild(predictionPath);
+      if (document.getElementById("showPersistence").checked) {
+        const persistencePath = document.createElementNS(ns, "path");
+        persistencePath.setAttribute("d", chartPath(rows, (_, index) => persistence[index], x, y)); persistencePath.setAttribute("class", "persistence-line"); svg.appendChild(persistencePath);
+      }
+
+      const crosshair = document.createElementNS(ns, "line");
+      crosshair.setAttribute("y1", m.t); crosshair.setAttribute("y2", H - m.b); crosshair.setAttribute("class", "crosshair"); crosshair.hidden = true; svg.appendChild(crosshair);
+      const actualDot = document.createElementNS(ns, "circle");
+      actualDot.setAttribute("r", 5); actualDot.setAttribute("fill", "var(--cyan)"); actualDot.setAttribute("class", "hover-dot"); actualDot.hidden = true; svg.appendChild(actualDot);
+      const predictionDot = document.createElementNS(ns, "circle");
+      predictionDot.setAttribute("r", 5); predictionDot.setAttribute("fill", "var(--amber)"); predictionDot.setAttribute("class", "hover-dot"); predictionDot.hidden = true; svg.appendChild(predictionDot);
+      const overlay = document.createElementNS(ns, "rect");
+      overlay.setAttribute("x", m.l); overlay.setAttribute("y", m.t); overlay.setAttribute("width", W - m.l - m.r); overlay.setAttribute("height", H - m.t - m.b); overlay.setAttribute("fill", "transparent"); overlay.style.cursor = "crosshair"; svg.appendChild(overlay);
+
+      function showPoint(clientX, clientY) {
+        const box = svg.getBoundingClientRect();
+        const svgX = (clientX - box.left) / box.width * W;
+        const index = Math.max(0, Math.min(rows.length - 1, Math.round((svgX - m.l) / (W - m.l - m.r) * (rows.length - 1))));
+        const row = rows[index], px = x(index), actual = row.actual, predicted = row[model];
+        crosshair.setAttribute("x1", px); crosshair.setAttribute("x2", px); crosshair.hidden = false;
+        if (Number.isFinite(actual)) { actualDot.setAttribute("cx", px); actualDot.setAttribute("cy", y(actual)); actualDot.hidden = false; } else actualDot.hidden = true;
+        if (Number.isFinite(predicted)) { predictionDot.setAttribute("cx", px); predictionDot.setAttribute("cy", y(predicted)); predictionDot.hidden = false; } else predictionDot.hidden = true;
+        const residual = Number.isFinite(actual) && Number.isFinite(predicted) ? predicted - actual : null;
+        const signedResidual = Number.isFinite(residual) ? (residual >= 0 ? "+$" : "−$") + Math.abs(residual).toFixed(3) : "—";
+        tooltip.innerHTML = `<strong>${row.date.toLocaleDateString("en-US", { year:"numeric", month:"short", day:"numeric", timeZone:"UTC" })}</strong><br>Actual: ${Number.isFinite(actual) ? money(actual) : "Pending"}<br>${fitModels[model]}: ${Number.isFinite(predicted) ? money(predicted) : "—"}<br>Prediction − actual: ${signedResidual}`;
+        const localX = (px / W) * wrap.clientWidth;
+        const localY = Number.isFinite(actual) ? (y(actual) / H) * wrap.clientHeight : wrap.clientHeight / 2;
+        tooltip.style.left = Math.min(wrap.clientWidth - 225, Math.max(4, localX)) + "px";
+        tooltip.style.top = Math.max(90, localY) + "px";
+        tooltip.hidden = false;
+      }
+      overlay.addEventListener("pointermove", event => showPoint(event.clientX, event.clientY));
+      overlay.addEventListener("pointerleave", () => { crosshair.hidden = true; actualDot.hidden = true; predictionDot.hidden = true; tooltip.hidden = true; });
+
+      const pairs = rows.filter(row => Number.isFinite(row.actual) && Number.isFinite(row[model])).map(row => [row.actual, row[model]]);
+      const errors = pairs.map(pair => pair[1] - pair[0]);
+      const mae = errors.reduce((sum, error) => sum + Math.abs(error), 0) / Math.max(1, errors.length);
+      const rmse = Math.sqrt(errors.reduce((sum, error) => sum + error ** 2, 0) / Math.max(1, errors.length));
+      const corr = correlation(pairs);
+      document.getElementById("fitN").textContent = rows.length.toLocaleString();
+      document.getElementById("fitMae").textContent = money(mae);
+      document.getElementById("fitRmse").textContent = money(rmse);
+      document.getElementById("fitCorrelation").textContent = corr == null ? "—" : corr.toFixed(3);
+      document.getElementById("predictionLegend").textContent = fitModels[model];
+      document.getElementById("fitDataStatus").innerHTML = `<strong>${rows[0].week_date} → ${rows[rows.length - 1].week_date}</strong> · ${pairs.length.toLocaleString()} paired actual/predicted values`;
+    }
+
+    async function loadForecastHistory() {
+      const paths = ["data/gas_forecast_tape.csv", "gas_forecast_tape.csv", "artifacts_part2/gas_forecast_tape.csv"];
+      for (const path of paths) {
+        try {
+          const response = await fetch(path, { cache: "no-store" });
+          if (!response.ok) continue;
+          fitRows = parseForecastCsv(await response.text());
+          if (fitRows.length) { renderFitChart(); return; }
+        } catch (_) {}
+      }
+      document.getElementById("fitN").textContent = "Unavailable";
+      document.getElementById("fitDataStatus").innerHTML = "<strong>Forecast tape was not staged.</strong> Deploy with the accompanying Pages workflow so the complete chart can load.";
+    }
+
+    document.getElementById("fitModel").addEventListener("change", renderFitChart);
+    document.getElementById("showPersistence").addEventListener("change", renderFitChart);
+    document.querySelectorAll("[data-fit-range]").forEach(button => button.addEventListener("click", () => {
+      fitRange = button.dataset.fitRange;
+      document.querySelectorAll("[data-fit-range]").forEach(candidate => candidate.setAttribute("aria-pressed", String(candidate === button)));
+      renderFitChart();
+    }));
+    document.getElementById("openFitChart").addEventListener("click", () => {
+      setTab("overview");
+      document.getElementById("fitExplorer").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
     const sliderIds = ["wti", "rbob", "stocks", "demand", "refinery"];
     let shock = false;
     function updateScenario() {
@@ -528,7 +812,7 @@
       addEventListener("resize", resize); resize(); frame();
     }
 
-    renderHistory(); renderModelForecasts(); renderValidation(); updateScenario(); animateSky(); loadTelemetry();
+    renderHistory(); renderModelForecasts(); renderValidation(); updateScenario(); animateSky(); loadTelemetry(); loadForecastHistory();
   </script>
 </body>
 </html>

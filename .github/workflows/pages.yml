@@ -73,6 +73,7 @@ jobs:
 
           for f in \
             artifacts_part2/gas_part2_summary.json \
+            artifacts_part2/gas_forecast_tape.csv \
             artifacts_part2b/gas_part2b_summary.json \
             artifacts_part2a/gas_part2a_summary.json \
             artifacts_part3/gas_part3_summary.json \
@@ -85,6 +86,13 @@ jobs:
               echo "Staged from artifacts: $f"
             fi
           done
+
+          # The interactive Actual-vs.-Predicted explorer reads the complete
+          # weekly tape from data/ while retaining the flat-path fallback.
+          if [ -f artifacts_part2/gas_forecast_tape.csv ]; then
+            mkdir -p _site/data
+            cp artifacts_part2/gas_forecast_tape.csv _site/data/gas_forecast_tape.csv
+          fi
 
           if [ -f favicon.ico ]; then
             cp favicon.ico _site/favicon.ico
