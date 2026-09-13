@@ -60,11 +60,13 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+from gas_time_contract import pipeline_identity, protocol_eligible_record, strict_json_dump
 from scipy import stats
 
 warnings.filterwarnings("ignore")
 
-SCRIPT_VERSION = "GAS_PART9_V1_CANONICAL"
+SCRIPT_VERSION = "GAS_PART9_V2_ELIGIBLE_COHORT"
 
 
 @dataclass(frozen=True)
@@ -74,7 +76,7 @@ class Part9Config:
     out_dir_name: str = "artifacts_part9"
 
     # Minimum realized observations required for significance
-    min_realized_n: int = 8        # ~2 months of weekly data
+    min_realized_n: int = 52       # one full prospective year
 
     # Diebold-Mariano test significance threshold
     dm_t_stat_min: float = 1.64   # ~90% confidence (one-sided)
@@ -170,11 +172,19 @@ def load_realized_rows(predlog_path: Path) -> pd.DataFrame:
         return pd.DataFrame()
 
     df[actual_col] = pd.to_numeric(df[actual_col], errors="coerce")
-    realized = df[df[actual_col].notna()].copy()
+    df["protocol_eligible"] = [
+        int(protocol_eligible_record(record))
+        for record in df.to_dict(orient="records")
+    ]
+    realized = df[
+        df[actual_col].notna() & df["protocol_eligible"].eq(1)
+    ].copy()
 
-    if "decision_date" in realized.columns:
-        realized["decision_date"] = pd.to_datetime(realized["decision_date"])
-        realized = realized.sort_values("decision_date").reset_index(drop=True)
+    if "target_date" in realized.columns:
+        realized["target_date"] = pd.to_datetime(
+            realized["target_date"], errors="coerce"
+        )
+        realized = realized.sort_values("target_date").reset_index(drop=True)
 
     return realized
 
@@ -213,15 +223,17 @@ def compute_rolling_metrics(df: pd.DataFrame, windows: Tuple[int, ...]) -> Dict[
 # ── Naive benchmark ────────────────────────────────────────────────────────────
 
 def compute_naive_metrics(df: pd.DataFrame) -> Dict[str, float]:
-    """Naive carry: predict this week's actual = last week's actual."""
-    y_true  = df["actual"].values
-    y_naive = np.roll(y_true, 1)
-    y_naive[0] = np.nan
+    """Evaluate the persistence value stored when each forecast was issued."""
+    y_true = pd.to_numeric(df["actual"], errors="coerce").values
+    y_naive = pd.to_numeric(
+        df.get("pred_persistence", pd.Series(np.nan, index=df.index)),
+        errors="coerce",
+    ).values
     return {
-        "mae":         _mae(y_true[1:], y_naive[1:]),
-        "rmse":        _rmse(y_true[1:], y_naive[1:]),
-        "mape":        _mape(y_true[1:], y_naive[1:]),
-        "dir_acc":     _dir_acc(y_true[1:], y_naive[1:]),
+        "mae": _mae(y_true, y_naive),
+        "rmse": _rmse(y_true, y_naive),
+        "mape": _mape(y_true, y_naive),
+        "dir_acc": _dir_acc(y_true, y_naive),
     }
 
 
@@ -376,6 +388,10 @@ def assess_model_health(
             status = "WARNING"
 
     dm_interp = dm_result.get("dm_interpretation", "")
+    if dm_interp != "MODEL_SIGNIFICANTLY_BETTER":
+        issues.append("Learned forecast is not significantly better than persistence")
+        if status == "HEALTHY":
+            status = "NOT_VALIDATED"
     if dm_interp == "MODEL_WORSE_THAN_NAIVE":
         issues.append("Model performs WORSE than naive carry benchmark (DM test)")
         if status == "HEALTHY":
@@ -384,6 +400,7 @@ def assess_model_health(
     recommendation = {
         "HEALTHY":            "Continue normal operation. Model performing as expected.",
         "WARNING":            "Review model. Consider retraining if issues persist.",
+        "NOT_VALIDATED":       "Keep the learned model advisory-only.",
         "STOP_SIGNAL":        "Model degradation detected. Retrain or suspend until resolved.",
         "INSUFFICIENT_DATA":  "Accumulate more live data before making health judgments.",
     }.get(status, "Unknown status.")
@@ -423,9 +440,9 @@ def main() -> int:
             "health_status": "INSUFFICIENT_DATA",
             "message": "No realized rows in prediction log yet.",
         }
+        summary.update(pipeline_identity())
         path = out_dir / "live_attribution_report.json"
-        with open(path, "w") as f:
-            json.dump(summary, f, indent=2)
+        strict_json_dump(summary, path)
         print(f"[Part9] Report -> {path}")
         return 0
 
@@ -472,7 +489,10 @@ def main() -> int:
     # Diebold-Mariano test
     y_true = df["actual"].values
     y_pred = df["pred_fusion"].values
-    y_naive = np.concatenate([[np.nan], y_true[:-1]])
+    y_naive = pd.to_numeric(
+        df.get("pred_persistence", pd.Series(np.nan, index=df.index)),
+        errors="coerce",
+    ).values
     dm_result = diebold_mariano_test(y_true, y_pred, y_naive)
     print(f"\n[Part9] Diebold-Mariano test: {dm_result['dm_interpretation']} "
           f"(t={dm_result['dm_t_stat']}, p={dm_result['dm_p_value']})")
@@ -495,7 +515,10 @@ def main() -> int:
     attr_df["abs_error"] = attr_df["error"].abs()
     attr_df["ape"]      = (attr_df["abs_error"] / attr_df["actual"].abs()).clip(0, 10)
 
-    naive_arr = np.concatenate([[np.nan], attr_df["actual"].values[:-1]])
+    naive_arr = pd.to_numeric(
+        attr_df.get("pred_persistence", pd.Series(np.nan, index=attr_df.index)),
+        errors="coerce",
+    ).values
     attr_df["naive_pred"]     = naive_arr
     attr_df["naive_error"]    = attr_df["actual"] - attr_df["naive_pred"]
     attr_df["naive_abs_error"] = attr_df["naive_error"].abs()
@@ -525,10 +548,11 @@ def main() -> int:
         "model_health": health,
         "beats_naive_pct": round(float(attr_df["beats_naive"].mean() * 100), 1)
             if "beats_naive" in attr_df.columns else None,
+        "cohort_contract": "prospective_exact_target_only",
+        **pipeline_identity(),
     }
     report_path = out_dir / "live_attribution_report.json"
-    with open(report_path, "w") as f:
-        json.dump(report, f, indent=2, default=str)
+    strict_json_dump(report, report_path)
     print(f"[Part9] Report -> {report_path}")
 
     print(f"\n[Part9] Beats naive: {report['beats_naive_pct']}% of weeks")
