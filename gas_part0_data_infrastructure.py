@@ -379,7 +379,7 @@ def main() -> int:
     freshness = check_freshness(df, cfg)
 
     if not freshness.get("data_freshness_ok", False):
-        write_part0_summary(out_dir, df, cfg, freshness, parquet_path)
+        write_part0_summary(out_dir, df, cfg, freshness)
         print("[Part0] FATAL: source week is stale or the target is not prospective.")
         return 1
 
@@ -395,7 +395,7 @@ def main() -> int:
     GasPriceDuckDB(db_path).upsert(df, table=cfg.duckdb_table)
     print(f"[Part0] DuckDB -> {db_path}")
 
-    write_part0_summary(out_dir, df, cfg, freshness)
+    write_part0_summary(out_dir, df, cfg, freshness, parquet_path)
 
     print("\n[Part0] Data infrastructure complete.")
     return 0
