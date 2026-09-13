@@ -70,9 +70,18 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from gas_time_contract import (
+    PROTOCOL_SCHEMA,
+    eastern_today,
+    pipeline_identity,
+    protocol_eligible_record,
+    strict_json_dump,
+    validate_prospective_forecast,
+)
+
 warnings.filterwarnings("ignore")
 
-SCRIPT_VERSION = "GAS_PART3_V1_CANONICAL"
+SCRIPT_VERSION = "GAS_PART3_V2_IMMUTABLE_LEDGER"
 
 
 @dataclass(frozen=True)
@@ -89,7 +98,7 @@ class Part3Config:
     confidence_agreement_pct: float = 0.02   # 2 cents per $1.00
 
     # Prediction log column schema version
-    schema_version: str = "V1_WEEKLY"
+    schema_version: str = PROTOCOL_SCHEMA
 
 
 def resolve_project_root(cfg: Part3Config) -> Path:
@@ -153,55 +162,44 @@ def load_regime_tape(root: Path, cfg: Part3Config) -> Optional[pd.DataFrame]:
 def determine_active_sleeves(
     summaries: Dict[str, Optional[Dict]],
 ) -> Tuple[Dict[str, float], List[str]]:
-    """
-    Determine which sleeves are active and their inverse-RMSE weights.
-    Returns (weights_dict, active_sleeve_names).
-    """
-    sleeve_rmse: Dict[str, float] = {}
+    """Select same-run sleeves using comparable validation RMSE values."""
+    core = summaries.get("part2")
+    if not core:
+        print("[Part3] FATAL: Part2 summary is missing.")
+        return {}, []
 
-    # Part2 base ensemble — always active
-    p2 = summaries.get("part2")
-    if p2:
-        val = p2.get("val_metrics", {})
-        for k, v in val.items():
-            if "ensemble" in k and "rmse" in k and v is not None:
-                sleeve_rmse["part2"] = float(v)
-                break
-    if "part2" not in sleeve_rmse:
-        sleeve_rmse["part2"] = 0.10  # default fallback weight denominator
+    core_rmse = core.get("val_metrics", {}).get("ensemble_rmse")
+    if core_rmse is None or not np.isfinite(float(core_rmse)) or float(core_rmse) <= 0:
+        print("[Part3] FATAL: Part2 ensemble RMSE is missing or invalid.")
+        return {}, []
 
-    # Part2b XGB — conditional
-    p2b = summaries.get("part2b")
-    if p2b and p2b.get("xgb_sleeve_recommended"):
-        rmse = p2b.get("xgb_val_rmse")
-        if rmse and np.isfinite(rmse):
-            sleeve_rmse["part2b"] = float(rmse)
-            print("[Part3] XGB sleeve INCLUDED (gate passed)")
-        else:
-            print("[Part3] XGB sleeve EXCLUDED (missing RMSE)")
-    else:
-        print("[Part3] XGB sleeve EXCLUDED (gate not passed)")
+    run_id = str(core.get("pipeline_run_id", ""))
+    sleeve_rmse: Dict[str, float] = {"part2": float(core_rmse)}
 
-    # Part2a LSTM — conditional
-    p2a = summaries.get("part2a")
-    if p2a and p2a.get("lstm_sleeve_recommended"):
-        rmse = p2a.get("lstm_val_rmse")
-        if rmse and np.isfinite(rmse):
-            sleeve_rmse["part2a"] = float(rmse)
-            print("[Part3] LSTM sleeve INCLUDED (gate passed)")
-        else:
-            print("[Part3] LSTM sleeve EXCLUDED (missing RMSE)")
-    else:
-        print("[Part3] LSTM sleeve EXCLUDED (gate not passed)")
+    candidates = (
+        ("part2b", "xgb_sleeve_recommended", "xgb_val_rmse"),
+        ("part2a", "lstm_sleeve_recommended", "lstm_val_rmse"),
+    )
+    for name, gate_key, rmse_key in candidates:
+        summary = summaries.get(name)
+        if not summary or not summary.get(gate_key):
+            print(f"[Part3] {name} EXCLUDED (gate not passed)")
+            continue
+        if not run_id or str(summary.get("pipeline_run_id", "")) != run_id:
+            print(f"[Part3] {name} EXCLUDED (stale or mixed-run provenance)")
+            continue
+        rmse = summary.get(rmse_key)
+        if rmse is None or not np.isfinite(float(rmse)) or float(rmse) <= 0:
+            print(f"[Part3] {name} EXCLUDED (invalid RMSE)")
+            continue
+        sleeve_rmse[name] = float(rmse)
 
-    # Inverse-RMSE weights
-    inv = {k: 1.0 / v for k, v in sleeve_rmse.items() if v > 0}
-    total = sum(inv.values())
-    weights = {k: v / total for k, v in inv.items()}
-    active = list(weights.keys())
-
+    inverse = {name: 1.0 / value for name, value in sleeve_rmse.items()}
+    total = sum(inverse.values())
+    weights = {name: value / total for name, value in inverse.items()}
+    active = list(weights)
     print(f"[Part3] Active sleeves: {active}")
-    print(f"[Part3] Fusion weights: { {k: f'{v:.3f}' for k, v in weights.items()} }")
+    print(f"[Part3] Fusion weights: {weights}")
     return weights, active
 
 
@@ -232,6 +230,10 @@ def fuse_forecasts(
     result = base[["week_date"]].copy()
     if "actual" in base.columns:
         result["actual"] = base["actual"].values
+    if "pred_persistence" in base.columns:
+        result["pred_persistence"] = base["pred_persistence"].values
+    else:
+        result["pred_persistence"] = np.nan
     # Live-row contract (Audit 2026-08): carry the live flag through so the
     # prediction log knows whether the latest row is a genuine forward forecast.
     if "is_live" in base.columns:
@@ -327,9 +329,13 @@ def assess_confidence(
 PREDLOG_COLUMNS = [
     "decision_date",
     "target_date",
+    "anchor_week",
     "week_date",
     "is_live_forecast",
+    "protocol_eligible",
     "pred_fusion",
+    "pred_candidate",
+    "pred_persistence",
     "pred_part2",
     "pred_part2b",
     "pred_part2a",
@@ -340,63 +346,76 @@ PREDLOG_COLUMNS = [
     "mape",
     "direction_correct",
     "confidence",
+    "publication_mode",
+    "operator_validated",
     "regime_label",
     "sleeve_spread_pct",
     "schema_version",
     "run_utc",
+    "pipeline_run_id",
+    "pipeline_run_attempt",
+    "source_code_sha",
 ]
+
 
 
 def build_prediction_log_row(
     fusion_df: pd.DataFrame,
     cfg: Part3Config,
 ) -> pd.Series:
-    """
-    Build the new prediction log row from the latest week's fusion forecast.
-    """
+    """Build and validate one genuinely prospective immutable ledger row."""
     if fusion_df.empty:
-        return pd.Series()
+        raise ValueError("fusion forecast is empty")
 
     row = fusion_df.iloc[-1]
+    anchor = pd.to_datetime(row.get("week_date"), errors="coerce")
+    target = anchor + pd.Timedelta(days=7)
+    decision = eastern_today()
+    is_live = int(row.get("is_live", 0) or 0)
 
-    # FIX (Audit 2026-08, date semantics): decision_date and target_date were
-    # previously derived from TODAY'S calendar ("current Monday" / "next
-    # Monday"), independent of what the model actually forecast. If the data
-    # lagged by a week — or the pipeline ran on a Wednesday with --force —
-    # the logged target_date no longer matched the week the fusion forecast
-    # was predicting, and the backfill would score the forecast against the
-    # wrong EIA release. Dates are now DATA-DERIVED:
-    #   week_date    = the anchor week of the forecast row (EIA week W)
-    #   target_date  = week_date + 7 days (the EIA release being predicted)
-    #   decision_date = the run date (audit trail only, never a join key)
-    anchor_week = pd.to_datetime(row.get("week_date"))
-    target_date = anchor_week + pd.Timedelta(days=7)
-    today = pd.Timestamp.today().normalize()
-    is_live_row = int(row.get("is_live", 0)) if not pd.isna(row.get("is_live", 0)) else 0
-    if not is_live_row:
-        print("[Part3] WARN: Latest fusion row is NOT a live row — the logged "
-              "forecast is retrospective (its target week is already realized).")
+    validate_prospective_forecast(
+        decision_date=decision,
+        anchor_week=anchor,
+        target_date=target,
+        is_live_forecast=is_live,
+    )
 
+    governed = float(row.get("pred_fusion", np.nan))
+    candidate = float(row.get("pred_candidate", np.nan))
+    persistence = float(row.get("pred_persistence", np.nan))
+    if not all(np.isfinite(value) for value in (governed, candidate, persistence)):
+        raise ValueError("governed, candidate, and persistence forecasts must be finite")
+
+    identity = pipeline_identity()
     log_row = {
-        "decision_date":   today.strftime("%Y-%m-%d"),
-        "target_date":     target_date.strftime("%Y-%m-%d"),
-        "week_date":       anchor_week.strftime("%Y-%m-%d"),
-        "is_live_forecast": is_live_row,
-        "pred_fusion":     round(float(row.get("pred_fusion", np.nan)), 4),
-        "pred_part2":      round(float(row.get("pred_part2", np.nan)), 4),
-        "pred_part2b":     round(float(row.get("pred_part2b", np.nan)), 4),
-        "pred_part2a":     round(float(row.get("pred_part2a", np.nan)), 4),
-        "actual":          np.nan,            # filled by backfill_realized
-        "actual_date":     "",
-        "mae":             np.nan,
-        "rmse":            np.nan,
-        "mape":            np.nan,
+        "decision_date": decision.strftime("%Y-%m-%d"),
+        "target_date": target.strftime("%Y-%m-%d"),
+        "anchor_week": anchor.strftime("%Y-%m-%d"),
+        "week_date": anchor.strftime("%Y-%m-%d"),
+        "is_live_forecast": 1,
+        "protocol_eligible": 1,
+        "pred_fusion": round(governed, 4),
+        "pred_candidate": round(candidate, 4),
+        "pred_persistence": round(persistence, 4),
+        "pred_part2": round(float(row.get("pred_part2", np.nan)), 4),
+        "pred_part2b": round(float(row.get("pred_part2b", np.nan)), 4),
+        "pred_part2a": round(float(row.get("pred_part2a", np.nan)), 4),
+        "actual": np.nan,
+        "actual_date": "",
+        "mae": np.nan,
+        "rmse": np.nan,
+        "mape": np.nan,
         "direction_correct": np.nan,
-        "confidence":      str(row.get("confidence", "UNKNOWN")),
-        "regime_label":    str(row.get("regime_label", "UNKNOWN")),
-        "sleeve_spread_pct": round(float(row.get("sleeve_spread_pct", np.nan)), 4),
-        "schema_version":  cfg.schema_version,
-        "run_utc":         datetime.now(timezone.utc).isoformat(),
+        "confidence": str(row.get("confidence", "NOT_VALIDATED")),
+        "publication_mode": str(row.get("publication_mode", "FAIL_CLOSED")),
+        "operator_validated": int(bool(row.get("operator_validated", False))),
+        "regime_label": str(row.get("regime_label", "UNKNOWN")),
+        "sleeve_spread_pct": round(
+            float(row.get("sleeve_spread_pct", np.nan)), 4
+        ),
+        "schema_version": cfg.schema_version,
+        "run_utc": datetime.now(timezone.utc).isoformat(),
+        **identity,
     }
     return pd.Series(log_row)
 
@@ -408,67 +427,50 @@ def upsert_prediction_log(
     predlog_path: Path,
     new_row: pd.Series,
 ) -> pd.DataFrame:
-    """
-    Append or update the prediction log with the new row.
-
-    FIX (Audit 2026-08):
-      - Keyed by target_date, not decision_date. The forecast IS the
-        target-week price; decision_date is only the run timestamp, and a
-        re-run on a different day must still upsert the same forecast row.
-      - Realized fields written by the backfill (actual, mae, ...) are
-        PRESERVED when a row is re-upserted: the fresh Part 3 row carries
-        NaN for those fields, and overwriting a realized value with NaN
-        would silently destroy backfilled history.
-      - Missing schema columns are added to older logs (forward-compatible
-        with the V1 schema migration pattern from the reference project).
-    """
+    """Append a target once; never revise a published forecast or provenance."""
     if predlog_path.exists():
-        df = pd.read_csv(predlog_path)
-        for col in PREDLOG_COLUMNS:
-            if col not in df.columns:
-                df[col] = np.nan
+        df = pd.read_csv(predlog_path, dtype={"pipeline_run_id": "string"})
     else:
         df = pd.DataFrame(columns=PREDLOG_COLUMNS)
 
-    target_date = str(new_row.get("target_date", "")).strip()
-    existing = df.index[df.get("target_date", pd.Series(dtype=str)).astype(str) == target_date]
+    for column in PREDLOG_COLUMNS:
+        if column not in df.columns:
+            df[column] = np.nan
 
-    if target_date and len(existing):
-        idx = existing[0]
-        for col, val in new_row.items():
-            if col not in df.columns:
-                continue
-            # Normalize empty-string placeholders to NaN so they hit the
-            # realized-preserve rule and never poison numeric columns.
-            if isinstance(val, str) and val.strip() == "":
-                val = np.nan
-            is_missing = val is None or (isinstance(val, float) and np.isnan(val))
-            if col in REALIZED_COLUMNS:
-                # Never clobber a realized value with a fresh NaN
-                current = df.at[idx, col]
-                if pd.notna(current) and is_missing:
-                    continue
-            # FIX (Audit 2026-08): pandas 2.x raises on assigning a string
-            # into an all-NaN float64 column (e.g. confidence/regime read
-            # back from CSV as float64 when previously empty). Upcast to
-            # object before writing incompatible values.
-            if (isinstance(val, str)
-                    and df[col].dtype != object):
-                df[col] = df[col].astype(object)
-            df.at[idx, col] = val
-        print(f"[Part3] Updated existing prediction log row (target {target_date})")
+    # Reclassify legacy/hindsight rows without deleting historical evidence.
+    if len(df):
+        df["protocol_eligible"] = [
+            int(protocol_eligible_record(record))
+            for record in df.to_dict(orient="records")
+        ]
+
+    target = str(new_row.get("target_date", "")).strip()
+    existing = df.index[
+        df["target_date"].astype(str).str.strip().eq(target)
+    ]
+    if len(existing):
+        index = existing[0]
+        old = pd.to_numeric(
+            pd.Series([df.at[index, "pred_fusion"]]), errors="coerce"
+        ).iloc[0]
+        new = float(new_row["pred_fusion"])
+        if not np.isfinite(old) or not np.isclose(float(old), new, atol=1e-12):
+            raise RuntimeError(
+                f"immutable target {target} already has a different forecast"
+            )
+        print(f"[Part3] Immutable target {target} already published; no rewrite.")
     else:
-        new_df = pd.DataFrame([new_row])
-        for col in PREDLOG_COLUMNS:
-            if col not in new_df.columns:
-                new_df[col] = np.nan
-        new_df = new_df[[c for c in PREDLOG_COLUMNS if c in new_df.columns]]
-        df = pd.concat([df, new_df], ignore_index=True)
-        print(f"[Part3] Appended new prediction log row (target {target_date})")
+        addition = pd.DataFrame([new_row]).reindex(columns=PREDLOG_COLUMNS)
+        df = pd.concat([df.reindex(columns=PREDLOG_COLUMNS), addition], ignore_index=True)
+        print(f"[Part3] Appended immutable prediction row for target {target}")
 
-    # Keep the log ordered by target_date
-    df["_sort"] = pd.to_datetime(df["target_date"], errors="coerce")
-    df = df.sort_values("_sort").drop(columns=["_sort"]).reset_index(drop=True)
+    sort_key = pd.to_datetime(df["target_date"], errors="coerce")
+    df = (
+        df.assign(_target_sort=sort_key)
+        .sort_values("_target_sort", kind="stable")
+        .drop(columns="_target_sort")
+        .reset_index(drop=True)
+    )
     return df
 
 
@@ -497,10 +499,12 @@ def write_part3_summary(
             "regime":            str(new_row.get("regime_label", "")),
         },
         "prediction_log_rows": predlog_len,
+        "operator_validated": bool(new_row.get("operator_validated", 0)),
+        "publication_mode": str(new_row.get("publication_mode", "FAIL_CLOSED")),
+        **pipeline_identity(),
     }
     path = out_dir / "gas_part3_summary.json"
-    with open(path, "w") as f:
-        json.dump(summary, f, indent=2, default=str)
+    strict_json_dump(summary, path)
     print(f"[Part3] Summary -> {path}")
 
 
@@ -530,12 +534,26 @@ def main() -> int:
 
     # Fuse forecasts
     fusion_df = fuse_forecasts(tapes, weights, active_sleeves)
-    if fusion_df.empty:
-        print("[Part3] FATAL: Fusion DataFrame is empty.")
+    if fusion_df.empty or not active_sleeves:
+        print("[Part3] FATAL: Fusion DataFrame is empty or has no valid core sleeve.")
         return 1
+
+    core_validation = (summaries.get("part2") or {}).get(
+        "operator_validation", {}
+    )
+    operator_validated = bool(core_validation.get("operator_validated", False))
+    fusion_df["pred_candidate"] = fusion_df["pred_fusion"]
+    fusion_df["operator_validated"] = operator_validated
+    if operator_validated:
+        fusion_df["publication_mode"] = "VALIDATED_CANDIDATE"
+    else:
+        fusion_df["pred_fusion"] = fusion_df["pred_persistence"]
+        fusion_df["publication_mode"] = "FAIL_CLOSED_PERSISTENCE"
 
     # Confidence assessment
     fusion_df = assess_confidence(fusion_df, active_sleeves, regime, cfg)
+    if not operator_validated:
+        fusion_df["confidence"] = "NOT_VALIDATED"
 
     # Write full fusion tape
     tape_path = out_dir / "gas_fusion_tape.parquet"
@@ -573,6 +591,17 @@ def main() -> int:
     print(f"[Part3] Prediction log -> {predlog_path} ({len(df_log)} rows)")
 
     write_part3_summary(out_dir, new_row, weights, active_sleeves, len(df_log))
+    strict_json_dump(
+        {
+            "status": "SUCCESS",
+            "source_observation_date": str(new_row.get("anchor_week")),
+            "target_date": str(new_row.get("target_date")),
+            "operator_validated": bool(new_row.get("operator_validated", 0)),
+            "publication_mode": str(new_row.get("publication_mode")),
+            **pipeline_identity(),
+        },
+        out_dir / "pipeline_status.json",
+    )
 
     print("\n[Part3] Governance and fusion complete.")
     return 0
