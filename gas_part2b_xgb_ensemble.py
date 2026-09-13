@@ -67,6 +67,8 @@ import pandas as pd
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
+from gas_time_contract import pipeline_identity, strict_json_dump
+
 warnings.filterwarnings("ignore")
 
 try:
@@ -77,7 +79,7 @@ except ImportError:
     HAVE_XGB = False
     print("[Part2b] XGBoost not installed. Install: pip install xgboost")
 
-SCRIPT_VERSION = "GAS_PART2B_V1_CANONICAL"
+SCRIPT_VERSION = "GAS_PART2B_V2_FAIL_CLOSED"
 
 
 @dataclass(frozen=True)
@@ -198,7 +200,7 @@ def train_xgb_ensemble(
           f"val {train_end}:{val_end} (last {val_len} labeled weeks)")
 
     # Impute NaN values — fit on TRAIN rows only (no leakage), then transform.
-    imputer = SimpleImputer(strategy="median")
+    imputer = SimpleImputer(strategy="median", keep_empty_features=True)
     Xtr  = imputer.fit_transform(X[feature_cols].values[:train_end])
     Xval = imputer.transform(X[feature_cols].values[train_end:val_end])
     ytr, yval = y.values[:train_end], y.values[train_end:val_end]
@@ -291,9 +293,9 @@ def main() -> int:
             "run_utc": datetime.now(timezone.utc).isoformat(),
             "xgb_sleeve_recommended": False,
             "reason": "xgboost_not_installed",
+            **pipeline_identity(),
         }
-        with open(out_dir / "gas_part2b_summary.json", "w") as f:
-            json.dump(summary, f, indent=2)
+        strict_json_dump(summary, out_dir / "gas_part2b_summary.json")
         return 0
 
     # Load features
@@ -320,9 +322,21 @@ def main() -> int:
     # recommended=True. An optional experimental sleeve must fail CLOSED —
     # no baseline means no evidence, so the gate does not pass.
     baseline_rmse = load_part2_baseline_rmse(part2_dir)
+    core_summary_path = part2_dir / "gas_part2_summary.json"
+    with open(core_summary_path, encoding="utf-8") as handle:
+        core_summary = json.load(handle)
+    core_validated = bool(
+        core_summary.get("operator_validation", {}).get(
+            "operator_validated", False
+        )
+    )
     xgb_rmse = xgb_metrics["val_rmse"]
     if baseline_rmse is not None and np.isfinite(baseline_rmse):
-        recommended = bool(np.isfinite(xgb_rmse) and xgb_rmse < baseline_rmse)
+        recommended = bool(
+            core_validated
+            and np.isfinite(xgb_rmse)
+            and xgb_rmse < baseline_rmse
+        )
         print(f"[Part2b] XGB RMSE: {xgb_rmse:.4f} vs Baseline: {baseline_rmse:.4f} "
               f"-> recommended={recommended}")
     else:
@@ -379,10 +393,11 @@ def main() -> int:
         },
         "n_configs_trained": len(models),
         "gate_window": "last_val_weeks_labeled_rows",
+        "core_operator_validated": core_validated,
+        **pipeline_identity(),
     }
     summary_path = out_dir / "gas_part2b_summary.json"
-    with open(summary_path, "w") as f:
-        json.dump(summary, f, indent=2, default=str)
+    strict_json_dump(summary, summary_path)
     print(f"[Part2b] Summary -> {summary_path}")
 
     status = "RECOMMENDED" if recommended else "NOT_RECOMMENDED"

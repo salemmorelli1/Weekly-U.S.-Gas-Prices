@@ -1,9 +1,9 @@
 # Weekly U.S. Gas Prices
 
 Forecasts next week's U.S. average regular gas price (the weekly EIA number,
-`GASREGCOVW`). Runs on GitHub Actions every Monday morning after the EIA
-release, logs its prediction, then scores itself on Wednesday once the next
-release is out.
+`GASREGCOVW`). Runs after EIA's normal Tuesday publication of the Monday
+observation, logs an immutable forecast for the following Monday, then scores
+eligible forecasts after their exact target observation becomes available.
 
 Dashboard: https://salemmorelli1.github.io/Weekly-U.S.-Gas-Prices/
 
@@ -14,8 +14,8 @@ The pipeline runs in order:
 ```
 gas_part0    FRED + yfinance weekly history (gas prices, WTI, RBOB, macro)
 gas_part0c   EIA Open Data API (gasoline stocks, demand, refinery utilization)
-gas_part6    HMM regime detection (NORMAL / SUPPLY_SHOCK / DEMAND_SURGE / DEFLATION)
-gas_part1    feature engineering (lags, momentum, crack spread, seasonality, regime)
+gas_part6    descriptive HMM/GMM regimes (not predictive validation features)
+gas_part1    causal feature engineering (lags, momentum, crack spread, seasonality)
 gas_part2    sklearn ensemble - the primary forecaster
 gas_part2b   XGBoost sleeve (optional)
 gas_part2a   LSTM sleeve (optional, needs torch)
@@ -26,19 +26,21 @@ gas_part9    live performance stats (MAE, MAPE, Diebold-Mariano vs naive, drift)
 The most recent week has no realized target yet, so Part 1 flags it as the
 live row. Models train on everything before it and predict it — that's the
 actual forecast, targeting the following Monday's EIA release. The prediction
-log is keyed by target date, so re-runs update in place instead of
-duplicating rows.
+log is keyed by target date. A target can be appended once; re-runs cannot
+revise its forecast or provenance.
 
-The XGBoost and LSTM sleeves only count if they beat the sklearn ensemble on
-the same trailing 52-week window. The LSTM additionally won't run at all
-unless the XGBoost sleeve earned its spot first (it checks the Part 2b
-summary at runtime). Missing baselines fail closed.
+The core ensemble is validated with sequential expanding-window forecasts and
+must beat same-date persistence in RMSE, a one-sided paired test, and at least
+75% of validation folds. Until that gate passes, the published forecast is
+fail-closed to persistence. Optional XGBoost and LSTM sleeves cannot activate
+unless the core gate has already passed; missing evidence fails closed.
 
 A prediction only counts once it's in `prediction_log.csv` before the answer
 is known. Wednesday's backfill fills in the realized price and error metrics;
-Part 9 keeps a running Diebold-Mariano test against just predicting last
-week's price. That comparison is the whole ballgame — takes about 8 weeks of
-realized data before it means anything.
+Part 9 keeps a running paired test against the persistence value stored when
+each forecast was issued. Legacy same-day and hindsight rows are retained for
+audit history but excluded from the eligible live cohort. General live-health
+claims require at least 52 eligible realized observations.
 
 ## Running it
 
@@ -59,21 +61,23 @@ python gas_run_weekly_prediction.py --force        # --force = run on any day
 Add `--with-backfill` to also fetch realized prices for past predictions.
 Everything also works in Colab — set `GASPRICE_ROOT` to a Drive path first.
 
-For the LSTM sleeve, uncomment `torch` in requirements.txt. It's safe to
-install eagerly; the sleeve gates itself.
+PyTorch is intentionally outside the production lock. Install a separately
+reviewed CPU-only build only when evaluating the optional LSTM sleeve.
 
 ## GitHub Actions
 
 Three workflows:
 
-- `weekly-production.yml` — Mondays ~10:35 AM ET. Full pipeline, commits
-  artifacts, which triggers the Pages deploy.
-- `weekly-backfill.yml` — Wednesdays ~8:00 AM ET. Fills realized prices,
-  re-runs Part 9.
+- `weekly-production.yml` — Tuesdays at 11:30 AM ET, with an idempotent
+  Wednesday holiday/delay fallback. Publishes the small release ledger and
+  retains the full research bundle for 90 days as a workflow artifact.
+- `weekly-backfill.yml` — Wednesdays at 1:00 PM ET. Fills only exact target
+  observations and re-runs the eligible live cohort.
 - `pages.yml` — deploys the dashboard from the committed data.
 
-The schedules use paired UTC crons plus a time gate because GitHub ignores
-timezone keys on cron triggers (learned that one the hard way).
+The workflows use GitHub's schedule timezone field directly. They do not use
+delay-sensitive wall-clock gates, so scheduler delay cannot turn a failed
+publication into a green skip.
 
 Setup on a fork: add the two keys as Actions secrets, set Pages source to
 "GitHub Actions", and give workflows read/write permission under
@@ -81,12 +85,14 @@ Settings → Actions → General.
 
 ## Where things land
 
-Artifacts are gitignored; the workflows force-add the ones worth keeping.
-The main ones:
+Large model, parquet, and database artifacts stay out of Git history and are
+retained in immutable workflow bundles. The reviewable publication surface is
+content-hashed in `data/release_manifest.json`. The main files are:
 
 - `artifacts_part3/prediction_log.csv` — the record that matters
 - `artifacts_part9/live_attribution_report.json` — health, DM test, drift
-- `artifacts_part0/gas_weekly_master.parquet` — the assembled weekly dataset
+- `data/release_manifest.json` — hashes, run identity, source date, and target
+- `data/gas_oof_predictions.csv` — sequential rolling-origin validation tape
 
 Health thresholds Part 9 watches: MAPE over 3% is a warning, over 6% is a
 stop signal; direction accuracy under 50% is a warning; recent-vs-historical

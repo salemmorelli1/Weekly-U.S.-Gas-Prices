@@ -59,6 +59,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+from gas_time_contract import eastern_today, pipeline_identity, sha256_file, strict_json_dump
 import yfinance as yf
 
 warnings.filterwarnings("ignore")
@@ -77,7 +79,7 @@ except Exception:
     duckdb = None
     HAVE_DUCKDB = False
 
-SCRIPT_VERSION = "GAS_PART0_V1_CANONICAL"
+SCRIPT_VERSION = "GAS_PART0_V2_RELEASE_CONTRACT"
 
 
 @dataclass(frozen=True)
@@ -95,7 +97,7 @@ class Part0Config:
 
     duckdb_table: str = "gas_weekly_features"
     duckdb_filename: str = "gas_price_data.duckdb"
-    freshness_warn_days: int = 14
+    freshness_warn_days: int = 7
     min_history_weeks: int = 104
 
     # FRED series IDs — populated in get_fred_series()
@@ -103,22 +105,16 @@ class Part0Config:
 
 
 def get_fred_series() -> Dict[str, str]:
+    """FRED identifiers verified for the production source contract."""
     return {
-        "gas_us_avg":    "GASREGCOVW",
-        "gas_midwest":   "GASMIDCOVW",
-        "gas_gulf":      "GASGULFCOVW",
-        "gas_east":      "GASEASTCOVW",
-        "gas_west":      "GASWESTCOVW",
-        "crude_wti":     "DCOILWTICO",
-        "crude_brent":   "DCOILBRENTEU",
-        "refinery_util": "WREFINER",
-        "gas_stocks":    "WGTSTUS1",
-        "gas_demand":    "WGFUPUS2",
-        "crude_stocks":  "WCRSTUS1",
-        "cpi_energy":    "CPIENGSL",
-        "cpi_gasoline":  "CUSR0000SETB01",
-        "unemployment":  "UNRATE",
-        "gdp_growth":    "A191RL1Q225SBEA",
+        "gas_us_avg": "GASREGCOVW",
+        "gas_midwest": "GASMIDCOVW",
+        "crude_wti": "DCOILWTICO",
+        "crude_brent": "DCOILBRENTEU",
+        "cpi_energy": "CPIENGSL",
+        "cpi_gasoline": "CUSR0000SETB01",
+        "unemployment": "UNRATE",
+        "gdp_growth": "A191RL1Q225SBEA",
     }
 
 
@@ -294,28 +290,76 @@ def build_weekly_dataset(
 
 def check_freshness(df: pd.DataFrame, cfg: Part0Config) -> Dict[str, object]:
     if df.empty or "week_date" not in df.columns:
-        return {"status": "ERROR", "message": "Empty dataset"}
-    latest = pd.to_datetime(df["week_date"]).max()
-    age_days = (pd.Timestamp.today() - latest).days
-    n_weeks = len(df)
+        return {
+            "freshness_status": "ERROR",
+            "message": "Empty dataset",
+            "data_freshness_ok": False,
+        }
+
+    if "gas_us_avg" not in df.columns:
+        return {
+            "freshness_status": "ERROR",
+            "message": "Required GASREGCOVW observations are missing",
+            "data_freshness_ok": False,
+        }
+
+    observed = df.loc[
+        pd.to_numeric(df["gas_us_avg"], errors="coerce").notna()
+    ].copy()
+    observed["week_date"] = pd.to_datetime(
+        observed["week_date"], errors="coerce"
+    )
+    observed = observed.dropna(subset=["week_date"])
+    if observed.empty:
+        return {
+            "freshness_status": "ERROR",
+            "message": "Required GASREGCOVW observations are empty",
+            "data_freshness_ok": False,
+        }
+
+    latest = observed["week_date"].max().normalize()
+    decision = eastern_today()
+    age_days = int((decision - latest).days)
+    target = latest + pd.Timedelta(days=7)
+    n_weeks = len(observed)
+    is_monday = latest.weekday() == 0
+    prospective = bool(target > decision)
+    fresh = bool(
+        is_monday
+        and 0 <= age_days <= cfg.freshness_warn_days
+        and prospective
+        and n_weeks >= cfg.min_history_weeks
+    )
     result = {
         "latest_week": latest.strftime("%Y-%m-%d"),
-        "age_days": int(age_days),
+        "forecast_target_week": target.strftime("%Y-%m-%d"),
+        "decision_date_eastern": decision.strftime("%Y-%m-%d"),
+        "age_days": age_days,
         "n_weeks": int(n_weeks),
         "has_min_history": n_weeks >= cfg.min_history_weeks,
-        "freshness_status": "OK" if age_days <= cfg.freshness_warn_days else "STALE",
+        "source_week_is_monday": is_monday,
+        "target_is_prospective": prospective,
+        "data_freshness_ok": fresh,
+        "freshness_status": "OK" if fresh else "STALE_OR_INELIGIBLE",
     }
-    print(f"[Part0] Freshness: {result['freshness_status']} | Latest: {latest.date()} "
-          f"({age_days}d ago) | Weeks: {n_weeks}")
+    print(
+        f"[Part0] Freshness: {result['freshness_status']} | "
+        f"source={latest.date()} target={target.date()} "
+        f"decision={decision.date()} age={age_days}d"
+    )
     return result
 
 
 def compute_schema_hash(df: pd.DataFrame) -> str:
-    return hashlib.md5("|".join(sorted(df.columns.tolist())).encode()).hexdigest()[:12]
+    return hashlib.sha256("|".join(sorted(df.columns.tolist())).encode()).hexdigest()
 
 
 def write_part0_summary(
-    out_dir: Path, df: pd.DataFrame, cfg: Part0Config, freshness: Dict,
+    out_dir: Path,
+    df: pd.DataFrame,
+    cfg: Part0Config,
+    freshness: Dict,
+    parquet_path: Optional[Path] = None,
 ) -> None:
     summary = {
         "script_version": SCRIPT_VERSION,
@@ -325,10 +369,13 @@ def write_part0_summary(
         "columns": list(df.columns),
         "schema_hash": compute_schema_hash(df),
         "freshness": freshness,
+        "master_parquet_sha256": (
+            sha256_file(parquet_path) if parquet_path and parquet_path.exists() else None
+        ),
+        **pipeline_identity(),
     }
     path = out_dir / "part0_summary.json"
-    with open(path, "w") as f:
-        json.dump(summary, f, indent=2, default=str)
+    strict_json_dump(summary, path)
     print(f"[Part0] Summary -> {path}")
 
 
@@ -352,6 +399,11 @@ def main() -> int:
 
     freshness = check_freshness(df, cfg)
 
+    if not freshness.get("data_freshness_ok", False):
+        write_part0_summary(out_dir, df, cfg, freshness)
+        print("[Part0] FATAL: source week is stale or the target is not prospective.")
+        return 1
+
     parquet_path = out_dir / "gas_weekly_master.parquet"
     df.to_parquet(parquet_path, index=False)
     print(f"[Part0] Parquet -> {parquet_path}")
@@ -364,11 +416,7 @@ def main() -> int:
     GasPriceDuckDB(db_path).upsert(df, table=cfg.duckdb_table)
     print(f"[Part0] DuckDB -> {db_path}")
 
-    write_part0_summary(out_dir, df, cfg, freshness)
-
-    if not freshness.get("has_min_history"):
-        print(f"[Part0] WARN: {freshness['n_weeks']} weeks of history "
-              f"(min {cfg.min_history_weeks} required).")
+    write_part0_summary(out_dir, df, cfg, freshness, parquet_path)
 
     print("\n[Part0] Data infrastructure complete.")
     return 0

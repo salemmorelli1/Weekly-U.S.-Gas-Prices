@@ -68,11 +68,13 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+from gas_time_contract import pipeline_identity, sha256_file, strict_json_dump
 from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("ignore")
 
-SCRIPT_VERSION = "GAS_PART1_V1_CANONICAL"
+SCRIPT_VERSION = "GAS_PART1_V2_CAUSAL_FEATURES"
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,31 @@ def resolve_project_root(cfg: Part1Config) -> Path:
         return Path(__file__).resolve().parent
     except NameError:
         return Path.cwd().resolve()
+
+
+def validate_master_lineage(part0_dir: Path, master_path: Path) -> None:
+    """Require the master parquet to match this run's producing summary."""
+    part0_path = part0_dir / "part0_summary.json"
+    if not part0_path.exists():
+        raise ValueError("Part 0 summary is missing")
+    with part0_path.open(encoding="utf-8") as handle:
+        part0 = json.load(handle)
+
+    current_run = pipeline_identity()["pipeline_run_id"]
+    if str(part0.get("pipeline_run_id", "")) != current_run:
+        raise ValueError("Part 0 summary belongs to a different pipeline run")
+
+    producer = part0
+    part0c_path = part0_dir / "part0c_summary.json"
+    if part0c_path.exists():
+        with part0c_path.open(encoding="utf-8") as handle:
+            part0c = json.load(handle)
+        if str(part0c.get("pipeline_run_id", "")) == current_run:
+            producer = part0c
+
+    expected = str(producer.get("master_parquet_sha256", ""))
+    if not expected or sha256_file(master_path) != expected:
+        raise ValueError("Master parquet hash does not match its producing summary")
 
 
 # ── Feature builders ───────────────────────────────────────────────────────────
@@ -309,6 +336,12 @@ def build_feature_matrix(
     df["week_date"] = pd.to_datetime(df["week_date"])
     df = df.sort_values("week_date").reset_index(drop=True)
 
+    # The release observation itself is known at decision time and is the
+    # mandatory same-window persistence comparator.
+    df["gas_us_avg_current"] = pd.to_numeric(
+        df.get("gas_us_avg"), errors="coerce"
+    )
+
     print("[Part1] Building lag features...")
     df = add_lag_features(df, "gas_us_avg", cfg.lag_windows)
 
@@ -340,8 +373,11 @@ def build_feature_matrix(
     print("[Part1] Building EIA ratio features...")
     df = add_eia_ratio_features(df)
 
-    print("[Part1] Merging regime features...")
-    df = add_regime_features(df, regime_tape)
+    # Part 6 fits a descriptive full-history regime model. Feeding its states
+    # into validation would leak future distribution information, so it is
+    # deliberately excluded from the predictive matrix.
+    if regime_tape is not None and not regime_tape.empty:
+        print("[Part1] Regime tape retained for diagnostics; predictive use disabled.")
 
     # Build target
     y = build_target(df, cfg)
@@ -373,6 +409,13 @@ def build_feature_matrix(
         and c not in exclude_cols
         and not c.startswith("regime_prob_")
     ]
+    for name in feature_cols:
+        df[name] = pd.to_numeric(df[name], errors="coerce")
+    df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan)
+    all_empty = [name for name in feature_cols if df[name].notna().sum() == 0]
+    if all_empty:
+        print(f"[Part1] Dropping all-empty features: {all_empty}")
+        feature_cols = [name for name in feature_cols if name not in all_empty]
 
     X_df = df[["week_date"] + feature_cols].copy()
     X_df["target_gas_price"] = y.values
@@ -429,6 +472,8 @@ def write_part1_summary(
     X_df: pd.DataFrame,
     y: pd.Series,
     cfg: Part1Config,
+    matrix_path: Optional[Path] = None,
+    target_path: Optional[Path] = None,
 ) -> None:
     feature_nan_rates = {
         col: float(X_df[col].isna().mean())
@@ -464,10 +509,21 @@ def write_part1_summary(
         },
         "high_nan_features": high_nan,
         "horizon_weeks": cfg.horizon_weeks,
+        "predictive_regime_features_enabled": False,
+        "feature_matrix_sha256": (
+            sha256_file(matrix_path)
+            if matrix_path is not None and matrix_path.exists()
+            else None
+        ),
+        "target_sha256": (
+            sha256_file(target_path)
+            if target_path is not None and target_path.exists()
+            else None
+        ),
+        **pipeline_identity(),
     }
     path = out_dir / "part1_summary.json"
-    with open(path, "w") as f:
-        json.dump(summary, f, indent=2, default=str)
+    strict_json_dump(summary, path)
     print(f"[Part1] Summary -> {path}")
     if high_nan:
         print(f"[Part1] WARN: {len(high_nan)} features with >10% NaN: "
@@ -492,6 +548,12 @@ def main() -> int:
     master_path = part0_dir / "gas_weekly_master.parquet"
     if not master_path.exists():
         print(f"[Part1] FATAL: {master_path} not found. Run gas_part0 first.")
+        return 1
+
+    try:
+        validate_master_lineage(part0_dir, master_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"[Part1] FATAL: master lineage validation failed: {exc}")
         return 1
 
     master_df = pd.read_parquet(master_path)
@@ -529,7 +591,7 @@ def main() -> int:
     combined["target_gas_price"] = y.values
     combined.to_csv(out_dir / "gas_feature_matrix.csv", index=False)
 
-    write_part1_summary(out_dir, X_df, y, cfg)
+    write_part1_summary(out_dir, X_df, y, cfg, X_path, y_path)
 
     y_lab = y[X_df["is_live"].values == 0] if "is_live" in X_df.columns else y
     print(f"\n[Part1] Feature matrix: {len(X_df)} rows x "

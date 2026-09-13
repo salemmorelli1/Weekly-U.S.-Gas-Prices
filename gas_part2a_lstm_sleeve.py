@@ -74,6 +74,8 @@ from sklearn.impute import SimpleImputer
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.preprocessing import StandardScaler
 
+from gas_time_contract import pipeline_identity, strict_json_dump
+
 warnings.filterwarnings("ignore")
 
 try:
@@ -88,7 +90,7 @@ except ImportError:
     print("[Part2a] PyTorch not installed. Install: pip install torch")
     print("[Part2a] Uncomment 'torch' in requirements.txt to enable LSTM sleeve.")
 
-SCRIPT_VERSION = "GAS_PART2A_LSTM_V1_CANONICAL"
+SCRIPT_VERSION = "GAS_PART2A_LSTM_V2_FAIL_CLOSED"
 
 
 @dataclass
@@ -364,7 +366,7 @@ def load_baseline_rmse(part2_dir: Path, part2b_dir: Path) -> Tuple[Optional[floa
 
 
 def get_feature_cols(X: pd.DataFrame) -> List[str]:
-    return [c for c in X.columns if c != "week_date"]
+    return [c for c in X.columns if c not in ("week_date", "is_live")]
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -390,9 +392,9 @@ def main() -> int:
             "run_utc": datetime.now(timezone.utc).isoformat(),
             "lstm_sleeve_recommended": False,
             "reason": "torch_not_installed",
+            **pipeline_identity(),
         }
-        with open(out_dir / "gas_part2a_summary.json", "w") as f:
-            json.dump(summary, f, indent=2)
+        strict_json_dump(summary, out_dir / "gas_part2a_summary.json")
         return 0
 
     # ── Part 2b activation gate (fail-closed) ──────────────────────────────
@@ -405,9 +407,9 @@ def main() -> int:
             "lstm_sleeve_recommended": False,
             "reason": "part2b_gate_not_passed",
             "gate_detail": gate_reason,
+            **pipeline_identity(),
         }
-        with open(out_dir / "gas_part2a_summary.json", "w") as f:
-            json.dump(summary, f, indent=2)
+        strict_json_dump(summary, out_dir / "gas_part2a_summary.json")
         return 0
     print(f"[Part2a] Part 2b activation gate passed ({gate_reason}).")
 
@@ -437,7 +439,7 @@ def main() -> int:
     # previously fit on the FULL matrix (train + val + live), leaking
     # validation-window information into preprocessing. All stats now come
     # from training rows only (targets before the common gate window).
-    imputer = SimpleImputer(strategy="median")
+    imputer = SimpleImputer(strategy="median", keep_empty_features=True)
     scaler  = StandardScaler()
     imputer.fit(X[feature_cols].values[:train_end_t])
     scaler.fit(imputer.transform(X[feature_cols].values[:train_end_t]))
@@ -471,9 +473,9 @@ def main() -> int:
             "run_utc": datetime.now(timezone.utc).isoformat(),
             "lstm_sleeve_recommended": False,
             "reason": "insufficient_history",
+            **pipeline_identity(),
         }
-        with open(out_dir / "gas_part2a_summary.json", "w") as f:
-            json.dump(summary, f, indent=2)
+        strict_json_dump(summary, out_dir / "gas_part2a_summary.json")
         return 0
 
     print(f"[Part2a] Sequences: total={n_seq} | train={len(X_tr)} | "
@@ -613,10 +615,10 @@ def main() -> int:
             "final_train_loss": round(train_losses[-1], 6),
             "final_val_loss": round(val_losses[-1], 6),
         },
+        **pipeline_identity(),
     }
     summary_path = out_dir / "gas_part2a_summary.json"
-    with open(summary_path, "w") as f:
-        json.dump(summary, f, indent=2, default=str)
+    strict_json_dump(summary, summary_path)
     print(f"[Part2a] Summary -> {summary_path}")
 
     status = "RECOMMENDED" if recommended else "NOT_RECOMMENDED"

@@ -67,6 +67,8 @@ import pandas as pd
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler
 
+from gas_time_contract import pipeline_identity, strict_json_dump
+
 warnings.filterwarnings("ignore")
 
 try:
@@ -78,7 +80,7 @@ except ImportError:
     print("[Part6] hmmlearn not available — GMM fallback active. "
           "Install: pip install hmmlearn")
 
-SCRIPT_VERSION = "GAS_PART6_V1_CANONICAL"
+SCRIPT_VERSION = "GAS_PART6_V2_DESCRIPTIVE_CAUSAL"
 
 # Features with NaN rate > this threshold are excluded from HMM training
 _NAN_COVERAGE_THRESHOLD: float = 0.40
@@ -213,7 +215,9 @@ def train_hmm(
                 random_state=cfg.seed,
             )
             model.fit(X)
-            print(f"[Part6] HMM trained. Converged: {model.monitor_.converged}")
+            if not model.monitor_.converged:
+                raise RuntimeError("HMM did not converge")
+            print("[Part6] HMM trained and converged.")
             return model, True
         except Exception as e:
             print(f"[Part6] HMM failed ({e}) — falling back to GMM")
@@ -291,12 +295,9 @@ def label_regimes(
         else:
             named[i] = "NORMAL"
 
-    # Ensure uniqueness — fallback if two regimes get same label
-    seen = {}
-    for i, lbl in enumerate(named):
-        if lbl in seen:
-            named[i] = f"{lbl}_{i}"
-        seen[lbl] = i
+    # Regime state numbers are intentionally explicit. Semantic names alone
+    # are not unique and labels such as NORMAL_1/NORMAL_3 imply false meaning.
+    named = [f"{label}__STATE_{index}" for index, label in enumerate(named)]
 
     print("[Part6] Regime label assignment:")
     for i, lbl in enumerate(named):
@@ -383,14 +384,13 @@ def main() -> int:
     # week, whose EIA fundamentals lag by a release cycle — were left as
     # regime UNKNOWN. Part 3's confidence logic then never saw the current
     # regime for the one week that matters most: the live forecast. Predict
-    # those rows too, using forward/backward-filled features so predict-time
+    # those rows too, using only forward-filled features so predict-time
     # inputs come from the same distribution the scaler/HMM were fit on.
     missing_mask = full_tape["regime_label"].isna()
     if missing_mask.any():
         fill_feats = (
             df[selected]
             .ffill()
-            .bfill()
         )
         fill_rows = fill_feats.loc[missing_mask.values]
         if not fill_rows.isna().any().any():
@@ -402,10 +402,10 @@ def main() -> int:
             for i in range(cfg.n_regimes):
                 full_tape.loc[missing_mask, f"regime_prob_{i}"] = fill_probs[:, i]
             print(f"[Part6] Filled {int(missing_mask.sum())} NaN-feature rows "
-                  "(incl. live week) via ffill/bfill predict")
+                  "(incl. live week) via causal forward-fill predict")
         else:
             print("[Part6] WARN: Could not fill NaN-feature rows — "
-                  "features unavailable even after ffill/bfill.")
+                  "features unavailable after causal forward-fill.")
     full_tape["regime_label"] = full_tape["regime_label"].fillna("UNKNOWN")
 
     # Write tape
@@ -442,10 +442,11 @@ def main() -> int:
         "regime_distribution": {k: int(v) for k, v in dist.items()},
         "latest_regime": str(full_tape["regime_label"].iloc[-1]),
         "latest_week": str(full_tape["week_date"].iloc[-1].date()),
+        "predictive_features_enabled": False,
+        **pipeline_identity(),
     }
     meta_path = out_dir / "gas_regime_meta.json"
-    with open(meta_path, "w") as f:
-        json.dump(meta, f, indent=2, default=str)
+    strict_json_dump(meta, meta_path)
     print(f"[Part6] Meta -> {meta_path}")
     print(f"\n[Part6] Latest regime: {meta['latest_regime']} "
           f"(week of {meta['latest_week']})")

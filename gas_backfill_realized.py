@@ -17,8 +17,9 @@ Behavior
 Maturity rule
 -------------
 A prediction is considered matured when target_date <= today.
-EIA releases weekly gas prices every Monday for the prior week.
-Allow 2 extra days buffer (run Wednesday+ to ensure EIA data is live).
+EIA publishes Monday observations around 10 a.m. Eastern on Tuesday, or on
+Wednesday after a government holiday. Rows are scored only on their exact
+target date; nearby observations are never substituted.
 
 Usage
 -----
@@ -35,6 +36,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+from gas_time_contract import eastern_today, protocol_eligible_record
 
 # ── Colab / environment detection ─────────────────────────────────────────────
 _IN_COLAB = "google.colab" in sys.modules
@@ -192,47 +195,55 @@ def fetch_gas_history_eia_api(start: str, end: str) -> pd.Series:
 
 
 def fetch_gas_history_master(start: str, end: str) -> pd.Series:
+    """Fetch authoritative current observations, then supplement with local history.
+
+    A non-empty local parquet must not prevent an API refresh: that was the
+    reason matured rows remained unfilled while workflows still passed.
     """
-    Try to load gas price history from the Part0 master parquet first
-    (fastest, no API call), then fall back to FRED, then EIA API.
-    """
+    authoritative = fetch_gas_history_fred(start, end)
+    if authoritative.empty:
+        authoritative = fetch_gas_history_eia_api(start, end)
+
+    local = pd.Series(dtype=float)
     master_path = PROJECT_DIR / "artifacts_part0" / "gas_weekly_master.parquet"
     if master_path.exists():
         try:
-            df = pd.read_parquet(master_path, columns=["week_date", "gas_us_avg"])
-            df["week_date"] = pd.to_datetime(df["week_date"]).dt.normalize()
-            s = df.set_index("week_date")["gas_us_avg"].dropna()
-            s = s[s.index >= pd.to_datetime(start)]
-            s = s[s.index <= pd.to_datetime(end)]
-            if not s.empty:
-                print(f"[Backfill] Master parquet: {len(s)} weekly prices "
-                      f"({s.index.min().date()} -> {s.index.max().date()})")
-                return s
-        except Exception as e:
-            print(f"[Backfill] Master parquet read failed: {e}")
+            frame = pd.read_parquet(
+                master_path, columns=["week_date", "gas_us_avg"]
+            )
+            frame["week_date"] = pd.to_datetime(
+                frame["week_date"], errors="coerce"
+            ).dt.normalize()
+            local = (
+                frame.dropna(subset=["week_date", "gas_us_avg"])
+                .set_index("week_date")["gas_us_avg"]
+                .astype(float)
+                .sort_index()
+            )
+            lower, upper = pd.to_datetime(start), pd.to_datetime(end)
+            local = local[(local.index >= lower) & (local.index <= upper)]
+            if not local.empty:
+                print(
+                    f"[Backfill] Local history: {len(local)} observations "
+                    f"({local.index.min().date()} -> {local.index.max().date()})"
+                )
+        except Exception as exc:
+            print(f"[Backfill] Master parquet read failed: {exc}")
 
-    # FRED
-    s = fetch_gas_history_fred(start, end)
-    if not s.empty:
-        return s
-
-    # EIA API
-    return fetch_gas_history_eia_api(start, end)
+    if authoritative.empty:
+        return local
+    authoritative = authoritative[~authoritative.index.duplicated(keep="last")]
+    # Current authoritative values win; local data only supply older history.
+    return authoritative.combine_first(local).sort_index()
 
 
 # ── Backfill logic ─────────────────────────────────────────────────────────────
 
-def _lookup_price(price_map: Dict[pd.Timestamp, float],
-                  d: pd.Timestamp) -> Optional[float]:
-    """Exact-date lookup, then ±3-day tolerance for release-date drift."""
-    v = price_map.get(d)
-    if v is not None:
-        return v
-    for delta in [1, -1, 2, -2, 3, -3]:
-        candidate = d + pd.Timedelta(days=delta)
-        if candidate in price_map:
-            return price_map[candidate]
-    return None
+def _lookup_price(
+    price_map: Dict[pd.Timestamp, float], d: pd.Timestamp
+) -> Optional[float]:
+    """Return only the observation for the exact EIA target Monday."""
+    return price_map.get(d.normalize())
 
 
 def backfill(
@@ -255,7 +266,7 @@ def backfill(
         gaps, re-ordering, and the target_date-sorted upsert in Part 3.
       - Rows are processed in target_date order for deterministic output.
     """
-    today = pd.Timestamp.today().normalize()
+    today = eastern_today()
     # Build date -> price lookup
     price_map: Dict[pd.Timestamp, float] = {
         idx.normalize(): float(val)
@@ -284,6 +295,12 @@ def backfill(
         row = df.loc[idx]
         target_date = _to_date(row.get("target_date"))
         if target_date is None or target_date > today:
+            continue
+        if not protocol_eligible_record(row):
+            print(
+                f"[Backfill] Skipping protocol-ineligible row at index {idx}: "
+                f"decision={row.get('decision_date')} target={row.get('target_date')}"
+            )
             continue
 
         matured_count += 1
@@ -382,7 +399,7 @@ def main(argv=None) -> int:
         return 0
 
     start_str = (dates.min() - pd.Timedelta(days=14)).strftime("%Y-%m-%d")
-    end_str   = (pd.Timestamp.today() + pd.Timedelta(days=7)).strftime("%Y-%m-%d")
+    end_str   = (eastern_today() + pd.Timedelta(days=7)).strftime("%Y-%m-%d")
     print(f"[Backfill] Fetching price history {start_str} -> {end_str}...")
 
     price_history = fetch_gas_history_master(start_str, end_str)
@@ -397,7 +414,7 @@ def main(argv=None) -> int:
           f"on {latest_price}")
 
     # Backfill
-    df_updated, matured, newly = backfill(df, price_history)
+    df_updated, matured, newly = backfill(df, price_history, force=args.force)
 
     # Summary stats
     realized_mask = pd.to_numeric(df_updated.get("actual", pd.Series(dtype=float)),
