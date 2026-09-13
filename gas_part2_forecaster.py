@@ -77,10 +77,13 @@ from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
+from scipy import stats
+
+from gas_time_contract import pipeline_identity, strict_json_dump
 
 warnings.filterwarnings("ignore")
 
-SCRIPT_VERSION = "GAS_PART2_V1_CANONICAL"
+SCRIPT_VERSION = "GAS_PART2_V2_CAUSAL_ROLLING_ORIGIN"
 
 
 @dataclass(frozen=True)
@@ -165,15 +168,18 @@ def naive_baseline_metrics(y: np.ndarray) -> Dict[str, float]:
 def build_models(cfg: Part2Config) -> Dict[str, object]:
     """Return dict of sklearn pipeline models."""
     models = {
-        "hgb": HistGradientBoostingRegressor(
-            max_iter=cfg.hgb_max_iter,
+        "hgb": make_pipeline(
+            SimpleImputer(strategy="median", keep_empty_features=True),
+            HistGradientBoostingRegressor(
+                max_iter=cfg.hgb_max_iter,
             learning_rate=cfg.hgb_learning_rate,
             max_depth=cfg.hgb_max_depth,
             l2_regularization=cfg.hgb_l2,
-            random_state=cfg.seed,
+                random_state=cfg.seed,
+            ),
         ),
         "rf": make_pipeline(
-            SimpleImputer(strategy="median"),
+            SimpleImputer(strategy="median", keep_empty_features=True),
             RandomForestRegressor(
                 n_estimators=cfg.rf_n_estimators,
                 max_depth=cfg.rf_max_depth,
@@ -183,7 +189,7 @@ def build_models(cfg: Part2Config) -> Dict[str, object]:
             ),
         ),
         "gbm": make_pipeline(
-            SimpleImputer(strategy="median"),
+            SimpleImputer(strategy="median", keep_empty_features=True),
             GradientBoostingRegressor(
                 n_estimators=cfg.gbm_n_estimators,
                 learning_rate=cfg.gbm_learning_rate,
@@ -192,7 +198,7 @@ def build_models(cfg: Part2Config) -> Dict[str, object]:
             ),
         ),
         "elasticnet": make_pipeline(
-            SimpleImputer(strategy="median"),
+            SimpleImputer(strategy="median", keep_empty_features=True),
             StandardScaler(),
             ElasticNet(
                 alpha=cfg.elasticnet_alpha,
@@ -201,7 +207,7 @@ def build_models(cfg: Part2Config) -> Dict[str, object]:
             ),
         ),
         "ridge": make_pipeline(
-            SimpleImputer(strategy="median"),
+            SimpleImputer(strategy="median", keep_empty_features=True),
             StandardScaler(),
             Ridge(alpha=1.0),
         ),
@@ -259,117 +265,179 @@ def walk_forward_train(
     X: pd.DataFrame,
     y: pd.Series,
     cfg: Part2Config,
-) -> Tuple[Dict[str, object], Dict[str, float], pd.DataFrame]:
-    """
-    Out-of-sample validation on the COMMON GATE WINDOW, then refit on all
-    labeled rows for the live forecast.
+) -> Tuple[Dict[str, object], Dict[str, float], Dict[str, float], pd.DataFrame, int]:
+    """Run sequential expanding-window validation, then refit on all labels.
 
-    FIX (Audit 2026-08):
-      - The docstring/signature previously disagreed (declared 3-tuple,
-        returned 4). Corrected: returns
-        (fitted_models, ensemble_weights, flat_val_metrics, oof_df, val_start_idx).
-      - The validation window is now the LAST cfg.val_weeks labeled rows.
-        This window is the shared sleeve-gate contract: Part 2, Part 2b, and
-        Part 2a all score on the same trailing 52 labeled weeks, so the
-        inverse-RMSE gates in Part 3 compare like with like. The previous
-        version validated on an early-2000s window while the sleeves used
-        different splits — the gate RMSEs were not comparable.
-
-    X and y must already be labeled-rows-only (no live rows).
+    Each fold's ensemble weights are derived only from earlier validation
+    folds. The scored row therefore cannot influence its own model or weight.
+    The mandatory comparator is same-window price persistence.
     """
     feature_cols = get_feature_cols(X)
-    X_vals = X[feature_cols].values
-    y_vals = y.values
-    dates  = X["week_date"].values
-    n = len(y_vals)
+    if "gas_us_avg_current" not in feature_cols:
+        raise ValueError(
+            "Part 1 must provide gas_us_avg_current for the persistence baseline"
+        )
 
-    models = build_models(cfg)
-    val_preds: Dict[str, List[float]] = {m: [] for m in models}
+    all_empty = [name for name in feature_cols if X[name].notna().sum() == 0]
+    if all_empty:
+        print(f"[Part2] Dropping all-empty features: {all_empty}")
+        feature_cols = [name for name in feature_cols if name not in all_empty]
 
-    # Common gate window: last val_weeks labeled rows.
-    val_len = min(cfg.val_weeks, max(1, int(n * 0.25)))
-    train_end = n - val_len
-    val_end   = n
-    if train_end < cfg.min_train_weeks:
-        print(f"[Part2] WARN: Only {train_end} training rows "
-              f"(recommended >= {cfg.min_train_weeks}).")
+    X_vals = X[feature_cols].replace([np.inf, -np.inf], np.nan).values
+    y_vals = pd.to_numeric(y, errors="coerce").values.astype(float)
+    dates = pd.to_datetime(X["week_date"]).values
+    n_rows = len(y_vals)
+    if n_rows < 12:
+        raise ValueError("At least 12 labeled rows are required")
 
-    print(f"[Part2] Common gate window: train 0:{train_end}, val {train_end}:{val_end} "
-          f"(last {val_len} labeled weeks)")
+    val_len = min(cfg.val_weeks, max(8, int(n_rows * 0.25)))
+    val_start = n_rows - val_len
+    if val_start < 4:
+        raise ValueError("Insufficient pre-validation history")
+    if val_start < cfg.min_train_weeks:
+        print(
+            f"[Part2] WARN: Only {val_start} initial training rows "
+            f"(recommended >= {cfg.min_train_weeks})."
+        )
 
-    Xtr = X_vals[:train_end]
-    ytr = y_vals[:train_end]
-    Xval = X_vals[train_end:val_end]
-    yval = y_vals[train_end:val_end]
+    fold_count = min(4, val_len)
+    folds = [part for part in np.array_split(np.arange(val_start, n_rows), fold_count)
+             if len(part)]
+    model_names = list(build_models(cfg))
+    model_oof = {name: np.full(val_len, np.nan) for name in model_names}
+    ensemble_oof = np.full(val_len, np.nan)
+    fold_ids = np.zeros(val_len, dtype=int)
+    fold_weights: list[dict[str, float]] = []
 
-    for name, model in models.items():
-        print(f"[Part2] Training {name}...")
-        model.fit(Xtr, ytr)
-        val_pred = model.predict(Xval)
-        val_preds[name] = val_pred.tolist()
+    for fold_number, positions in enumerate(folds, start=1):
+        train_end = int(positions[0])
+        fold_models = build_models(cfg)
 
-    val_actuals = yval.tolist()
-    val_dates   = [pd.Timestamp(d) for d in dates[train_end:val_end]]
+        prior_stop = train_end - val_start
+        if prior_stop:
+            inverse = {}
+            for name in model_names:
+                metric = compute_metrics(
+                    y_vals[val_start:train_end], model_oof[name][:prior_stop]
+                )["rmse"]
+                if np.isfinite(metric) and metric > 0:
+                    inverse[name] = 1.0 / metric
+            total = sum(inverse.values())
+            weights_now = (
+                {name: inverse.get(name, 0.0) / total for name in model_names}
+                if total > 0
+                else {name: 1.0 / len(model_names) for name in model_names}
+            )
+        else:
+            weights_now = {name: 1.0 / len(model_names) for name in model_names}
 
-    # Compute per-model validation metrics
-    val_metrics: Dict[str, Dict] = {}
-    val_rmses: Dict[str, float] = {}
-    for name, preds in val_preds.items():
-        m = compute_metrics(np.array(val_actuals), np.array(preds))
-        val_metrics[name] = m
-        val_rmses[name] = m["rmse"]
-        print(f"  [Part2] {name} val RMSE: {m['rmse']:.4f} | MAE: {m['mae']:.4f} | "
-              f"MAPE: {m['mape']:.2f}% | DirAcc: {m['dir_acc']:.3f}")
+        print(
+            f"[Part2] Fold {fold_number}/{len(folds)}: "
+            f"train 0:{train_end}, score {positions[0]}:{positions[-1] + 1}"
+        )
+        offset = positions - val_start
+        for name, model in fold_models.items():
+            model.fit(X_vals[:train_end], y_vals[:train_end])
+            model_oof[name][offset] = model.predict(X_vals[positions])
 
-    # Compute ensemble weights
-    if cfg.ensemble_weighting == "val_rmse":
-        # Inverse RMSE weighting
-        inv_rmse = {
-            k: 1.0 / v for k, v in val_rmses.items()
-            if v is not None and np.isfinite(v) and v > 0
-        }
-        total = sum(inv_rmse.values())
-        weights = {k: v / total for k, v in inv_rmse.items()}
+        matrix = np.column_stack([model_oof[name][offset] for name in model_names])
+        vector = np.array([weights_now[name] for name in model_names])
+        ensemble_oof[offset] = matrix @ vector
+        fold_ids[offset] = fold_number
+        fold_weights.append(weights_now)
+
+    actual = y_vals[val_start:]
+    persistence = pd.to_numeric(
+        X.iloc[val_start:]["gas_us_avg_current"], errors="coerce"
+    ).values.astype(float)
+
+    metrics: Dict[str, float] = {}
+    inverse_final: Dict[str, float] = {}
+    for name in model_names:
+        values = compute_metrics(actual, model_oof[name])
+        for metric_name, value in values.items():
+            metrics[f"{name}_{metric_name}"] = float(value)
+        rmse = values["rmse"]
+        if np.isfinite(rmse) and rmse > 0:
+            inverse_final[name] = 1.0 / rmse
+
+    total_final = sum(inverse_final.values())
+    weights = (
+        {name: inverse_final.get(name, 0.0) / total_final for name in model_names}
+        if total_final > 0
+        else {name: 1.0 / len(model_names) for name in model_names}
+    )
+
+    ensemble_metrics = compute_metrics(actual, ensemble_oof)
+    persistence_metrics = compute_metrics(actual, persistence)
+    for metric_name, value in ensemble_metrics.items():
+        metrics[f"ensemble_{metric_name}"] = float(value)
+    for metric_name, value in persistence_metrics.items():
+        metrics[f"persistence_{metric_name}"] = float(value)
+
+    mask = np.isfinite(actual) & np.isfinite(ensemble_oof) & np.isfinite(persistence)
+    gains = (actual[mask] - persistence[mask]) ** 2 - (
+        actual[mask] - ensemble_oof[mask]
+    ) ** 2
+    if len(gains) >= 8 and not np.allclose(gains, gains[0]):
+        test = stats.ttest_1samp(gains, popmean=0.0, alternative="greater")
+        p_value = float(test.pvalue)
     else:
-        n_m = len(models)
-        weights = {k: 1.0 / n_m for k in models}
+        p_value = np.nan
 
-    print(f"[Part2] Ensemble weights: { {k: f'{v:.3f}' for k, v in weights.items()} }")
+    positive_folds = 0
+    for fold_number in sorted(set(fold_ids)):
+        fold_mask = fold_ids == fold_number
+        model_rmse = compute_metrics(actual[fold_mask], ensemble_oof[fold_mask])["rmse"]
+        base_rmse = compute_metrics(actual[fold_mask], persistence[fold_mask])["rmse"]
+        if np.isfinite(model_rmse) and np.isfinite(base_rmse) and model_rmse < base_rmse:
+            positive_folds += 1
 
-    # Re-fit on ALL labeled data so the live forecast uses every realized week.
-    print("[Part2] Re-fitting on all labeled data for the live forecast...")
-    for name, model in models.items():
+    required_positive = max(1, int(np.ceil(len(folds) * 0.75)))
+    operator_validated = bool(
+        np.isfinite(ensemble_metrics["rmse"])
+        and np.isfinite(persistence_metrics["rmse"])
+        and ensemble_metrics["rmse"] < persistence_metrics["rmse"]
+        and np.isfinite(p_value)
+        and p_value < 0.10
+        and positive_folds >= required_positive
+    )
+    metrics.update(
+        {
+            "paired_p_value": p_value,
+            "positive_folds": float(positive_folds),
+            "required_positive_folds": float(required_positive),
+            "operator_validated": float(operator_validated),
+        }
+    )
+
+    oof = pd.DataFrame(
+        {
+            "week_date": pd.to_datetime(dates[val_start:]),
+            "actual": actual,
+            "pred_ensemble": ensemble_oof,
+            "pred_persistence": persistence,
+            "fold": fold_ids,
+        }
+    )
+    for name in model_names:
+        oof[f"pred_{name}"] = model_oof[name]
+    oof["weights_json"] = [
+        json.dumps(fold_weights[max(0, fold_id - 1)], sort_keys=True)
+        for fold_id in fold_ids
+    ]
+
+    final_models = build_models(cfg)
+    for name, model in final_models.items():
+        print(f"[Part2] Re-fitting {name} on all labeled rows...")
         model.fit(X_vals, y_vals)
 
-    # OOF predictions DataFrame (val window)
-    oof_df = pd.DataFrame({
-        "week_date": val_dates,
-        "actual": val_actuals,
-    })
-    for name, preds in val_preds.items():
-        oof_df[f"pred_{name}"] = preds
-
-    oof_ensemble = np.zeros(len(val_actuals))
-    for name, w in weights.items():
-        oof_ensemble += w * np.array(val_preds[name])
-    oof_df["pred_ensemble"] = oof_ensemble
-    oof_df["weights_json"] = json.dumps(weights)
-
-    # Ensemble metrics on the common gate window — this is the number Part 2b
-    # and Part 2a gate against, so it must exist under an "ensemble" key.
-    ens_metrics = compute_metrics(np.array(val_actuals), oof_ensemble)
-    print(f"[Part2] ENSEMBLE val RMSE: {ens_metrics['rmse']:.4f} | "
-          f"MAE: {ens_metrics['mae']:.4f} | MAPE: {ens_metrics['mape']:.2f}%")
-
-    # Flatten val_metrics for return
-    flat_val_metrics: Dict[str, float] = {}
-    for model_name, m in val_metrics.items():
-        for metric_name, val in m.items():
-            flat_val_metrics[f"{model_name}_{metric_name}"] = float(val) if val is not None else np.nan
-    for metric_name, val in ens_metrics.items():
-        flat_val_metrics[f"ensemble_{metric_name}"] = float(val) if val is not None else np.nan
-
-    return models, weights, flat_val_metrics, oof_df, train_end
+    print(
+        f"[Part2] Ensemble RMSE={ensemble_metrics['rmse']:.4f}; "
+        f"persistence RMSE={persistence_metrics['rmse']:.4f}; "
+        f"paired p={p_value:.4f}; validated={operator_validated}"
+    )
+    return final_models, weights, metrics, oof, val_start
 
 
 # ── Live prediction ────────────────────────────────────────────────────────────
@@ -423,6 +491,12 @@ def predict_latest(
             num += w * v
             den += w
     preds["pred_ensemble"] = float(num / den) if den > 0 else np.nan
+    persistence = pd.to_numeric(
+        anchor.get("gas_us_avg_current", pd.Series([np.nan])), errors="coerce"
+    ).iloc[0]
+    preds["pred_persistence"] = (
+        float(persistence) if np.isfinite(persistence) else np.nan
+    )
     return preds, anchor_week, is_true_live
 
 
@@ -516,16 +590,27 @@ def write_part2_summary(
                         for k, v in val_metrics.items()},
         "naive_baseline_metrics": {k: (round(v, 4) if isinstance(v, float) and np.isfinite(v) else None)
                                    for k, v in naive_metrics.items()},
+        "operator_validation": {
+            "operator_validated": bool(val_metrics.get("operator_validated", 0.0)),
+            "ensemble_rmse": val_metrics.get("ensemble_rmse"),
+            "persistence_rmse": val_metrics.get("persistence_rmse"),
+            "paired_p_value": val_metrics.get("paired_p_value"),
+            "positive_folds": int(val_metrics.get("positive_folds", 0)),
+            "required_positive_folds": int(
+                val_metrics.get("required_positive_folds", 0)
+            ),
+        },
+        **pipeline_identity(),
         "config": {
             "val_weeks": cfg.val_weeks,
             "min_train_weeks": cfg.min_train_weeks,
             "ensemble_weighting": cfg.ensemble_weighting,
-            "gate_window": "last_val_weeks_labeled_rows",
+            "gate_window": "sequential_expanding_rolling_origin",
+            "operator_gate": "rmse<persistence, paired p<0.10, >=75% positive folds",
         },
     }
     path = out_dir / "gas_part2_summary.json"
-    with open(path, "w") as f:
-        json.dump(summary, f, indent=2, default=str)
+    strict_json_dump(summary, path)
     print(f"[Part2] Summary -> {path}")
 
 
@@ -587,6 +672,7 @@ def main() -> int:
 
     oof_path = out_dir / "gas_oof_predictions.parquet"
     oof_df.to_parquet(oof_path, index=False)
+    oof_df.to_csv(out_dir / "gas_oof_predictions.csv", index=False)
     print(f"[Part2] OOF predictions -> {oof_path}")
 
     # Save models
