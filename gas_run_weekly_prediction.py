@@ -19,15 +19,15 @@ Authoritative weekly execution order
 
 Cadence
 -------
-  Weekly, Monday morning. EIA releases prior-week gas prices on Monday.
-  Run after ~10am ET to ensure EIA data is live.
+  Weekly after the EIA release: Tuesday after 10 a.m. Eastern, with
+  Wednesday as the government-holiday fallback.
 
 Usage
 -----
   python gas_run_weekly_prediction.py
   python gas_run_weekly_prediction.py --direct      # skip validator if present
   python gas_run_weekly_prediction.py --with-backfill  # also run backfill_realized
-  python gas_run_weekly_prediction.py --force       # run even if not Monday
+  python gas_run_weekly_prediction.py --force       # manual run on any day
 """
 from __future__ import annotations
 
@@ -35,9 +35,10 @@ import argparse
 import os
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 
 # ── Colab / environment helpers ────────────────────────────────────────────────
@@ -241,10 +242,12 @@ def run_pipeline(
     return 0
 
 
-# ── Day check ──────────────────────────────────────────────────────────────────
+# ── Release-day check ─────────────────────────────────────────────────────────
 
-def is_monday() -> bool:
-    return datetime.today().weekday() == 0  # Monday = 0
+def is_release_day(now: Optional[datetime] = None) -> bool:
+    """Return true on the normal Tuesday or holiday-fallback Wednesday."""
+    current = now or datetime.now(ZoneInfo("America/New_York"))
+    return current.weekday() in {1, 2}
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -256,7 +259,7 @@ def main() -> int:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Run even if today is not Monday.",
+        help="Run even if today is not Tuesday/Wednesday.",
     )
     parser.add_argument(
         "--with-backfill",
@@ -286,14 +289,20 @@ def main() -> int:
 
     print(f"[Runner] ROOT: {PROJECT_DIR}")
     print(f"[Runner] IN_COLAB: {IN_COLAB}")
-    today = datetime.today()
-    print(f"[Runner] Today: {today.strftime('%A %Y-%m-%d')}")
+    today = datetime.now(ZoneInfo("America/New_York"))
+    print(f"[Runner] Eastern time: {today.strftime('%A %Y-%m-%d %H:%M %Z')}")
 
-    # Day-of-week guard
-    if not is_monday() and not args.force:
-        print("\n[Runner] Today is not Monday. The GasPriceForecast pipeline is designed")
-        print("         to run on Monday after the EIA weekly release (~10am ET).")
-        print("         Use --force to run on any day.")
+    # Give every subprocess the same immutable run identity.
+    os.environ.setdefault(
+        "GASPRICE_PIPELINE_RUN_ID",
+        os.environ.get("GITHUB_RUN_ID", "").strip()
+        or datetime.now(timezone.utc).strftime("local-%Y%m%dT%H%M%S%fZ"),
+    )
+
+    # Day-of-week guard. Workflows pass --force after their release-aware gate.
+    if not is_release_day(today) and not args.force:
+        print("\n[Runner] Today is not Tuesday or Wednesday Eastern time.")
+        print("         Run after the EIA weekly release, or use --force manually.")
         return 0
 
     # File audit
