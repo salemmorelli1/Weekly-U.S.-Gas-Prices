@@ -296,11 +296,32 @@ def check_freshness(df: pd.DataFrame, cfg: Part0Config) -> Dict[str, object]:
             "data_freshness_ok": False,
         }
 
-    latest = pd.to_datetime(df["week_date"], errors="coerce").max().normalize()
+    if "gas_us_avg" not in df.columns:
+        return {
+            "freshness_status": "ERROR",
+            "message": "Required GASREGCOVW observations are missing",
+            "data_freshness_ok": False,
+        }
+
+    observed = df.loc[
+        pd.to_numeric(df["gas_us_avg"], errors="coerce").notna()
+    ].copy()
+    observed["week_date"] = pd.to_datetime(
+        observed["week_date"], errors="coerce"
+    )
+    observed = observed.dropna(subset=["week_date"])
+    if observed.empty:
+        return {
+            "freshness_status": "ERROR",
+            "message": "Required GASREGCOVW observations are empty",
+            "data_freshness_ok": False,
+        }
+
+    latest = observed["week_date"].max().normalize()
     decision = eastern_today()
     age_days = int((decision - latest).days)
     target = latest + pd.Timedelta(days=7)
-    n_weeks = len(df)
+    n_weeks = len(observed)
     is_monday = latest.weekday() == 0
     prospective = bool(target > decision)
     fresh = bool(

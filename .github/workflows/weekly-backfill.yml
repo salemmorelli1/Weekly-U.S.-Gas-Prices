@@ -1,46 +1,26 @@
 name: Weekly EIA Realized Price Backfill
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Backfills realized EIA weekly gas prices into the prediction log and
-# re-runs live attribution diagnostics (Part 9).
-#
-# FIX (Audit 2026-08): removed the non-functional `timezone` key from the
-# schedule trigger — GitHub Actions ignores it (same root cause as the
-# production workflow / PriceCall S60). The previous single cron
-# "0 8 * * 3" fired at 8:00 UTC = 3:00/4:00 AM ET. Replaced with the dual
-# UTC cron pattern targeting 8:00 AM ET every Wednesday:
-#   8:00 AM EDT (UTC-4) = 12:00 UTC  →  cron: "0 12 * * 3"
-#   8:00 AM EST (UTC-5) = 13:00 UTC  →  cron: "0 13 * * 3"
-# A Python time gate suppresses the out-of-window duplicate; manual
-# dispatches bypass the gate. The backfill is idempotent, so a double fire
-# on DST-crossover weeks is harmless.
-#
-# Kept separate from the production workflow intentionally:
-#   - Uses only lightweight dependencies (no sklearn/torch)
-#   - Runs Wednesday — 2 days after the Monday EIA release, giving EIA time
-#     to publish and FRED time to reflect the data
-#   - Can be re-run independently without triggering a full retrain
-#   - Uses [skip ci] on its commit to prevent a Pages redeploy loop
-#
-# Secrets required:
-#   FRED_API_KEY   — primary realized price source (GASREGCOVW)
-#   EIA_API_KEY    — fallback if FRED is unavailable
-# ─────────────────────────────────────────────────────────────────────────────
-
 on:
   schedule:
-    - cron: "0 12 * * 3"   # 8:00 AM EDT (UTC-4, summer)
-    - cron: "0 13 * * 3"   # 8:00 AM EST (UTC-5, winter)
+    # FRED normally reflects Monday's EIA observation by Wednesday.
+    - cron: "0 13 * * 3"
+      timezone: "America/New_York"
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Audit only — print backfill plan without writing"
+        description: "Audit without writing"
+        required: false
+        default: false
+        type: boolean
+      force:
+        description: "Recheck already realized eligible rows"
         required: false
         default: false
         type: boolean
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: gas-price-production
@@ -48,6 +28,7 @@ concurrency:
 
 env:
   GASPRICE_ROOT: ${{ github.workspace }}
+  GASPRICE_PIPELINE_RUN_ID: ${{ github.run_id }}
   FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
   EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -55,255 +36,105 @@ env:
 
 jobs:
   backfill:
-    name: Backfill realized EIA prices + re-run Part 9
+    name: Backfill exact-target realized evidence
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────
-      - name: Check out repo
-        uses: actions/checkout@v5
+      - name: Check out main
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
           token: ${{ secrets.PAT_TOKEN || github.token }}
 
-      # ── 2. Time gate ─────────────────────────────────────────────────────
-      # Both crons fire every Wednesday; the gate passes the one landing in
-      # the 8:00-10:30 AM ET window and suppresses the opposing-DST-season
-      # duplicate. Manual dispatches always proceed.
-      - name: Check run window (8:00-10:30 AM ET, Wednesdays)
-        id: gate
-        run: |
-          python - <<'PYEOF'
-          import sys, os
-          from datetime import datetime
-          from zoneinfo import ZoneInfo
-
-          event = os.environ.get("GITHUB_EVENT_NAME", "")
-          if event == "workflow_dispatch":
-              print("Manual dispatch — skipping time gate.")
-              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-                  f.write("run=true\n")
-              sys.exit(0)
-
-          now = datetime.now(ZoneInfo("America/New_York"))
-          hour, minute, weekday = now.hour, now.minute, now.weekday()
-
-          in_window = (weekday == 2) and (
-              (hour == 8) or (hour == 9) or (hour == 10 and minute <= 30)
-          )
-          print(f"NY time: {now.strftime('%H:%M')} weekday={weekday} in_window={in_window}")
-
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"run={'true' if in_window else 'false'}\n")
-
-          if not in_window:
-              print("Outside Wednesday 8:00-10:30 AM ET window — skipping run.")
-          PYEOF
-
-      # ── 3. Python — lightweight install only ─────────────────────────────
-      - name: Set up Python
-        if: steps.gate.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
-        uses: actions/setup-python@v6
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
-          cache: "pip"
+          cache: pip
+          cache-dependency-path: requirements-backfill-lock.txt
 
-      - name: Install lightweight backfill dependencies
-        if: steps.gate.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+      - name: Install locked backfill dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install numpy pandas requests fredapi pyarrow scipy
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -r requirements-backfill-lock.txt
 
-      # ── 4. Restore accumulating artifacts from remote ────────────────────
-      # Must restore the prediction log and attribution history so the
-      # backfill appends to the existing record rather than starting from
-      # scratch (PriceCall Finding C / BUG-1 pattern — both workflows share
-      # the gas-price-production concurrency group and can each check out a
-      # stale workspace snapshot).
-      - name: Restore accumulating artifacts from remote
-        if: steps.gate.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
-        run: |
-          git fetch origin "${GITHUB_REF_NAME}" --quiet || true
-
-          for path in \
-            artifacts_part0/gas_weekly_master.parquet \
-            artifacts_part3/prediction_log.csv \
-            artifacts_part3/gas_part3_summary.json \
-            artifacts_part9/live_attribution_report.json \
-            artifacts_part9/live_attribution_tape.csv
-          do
-            git checkout "origin/${GITHUB_REF_NAME}" -- "$path" 2>/dev/null \
-              && echo "Restored: $path" \
-              || echo "Not yet in repo (first run?): $path"
-          done
-
-      # ── 5. Skip if prediction log does not exist yet ─────────────────────
-      - name: Skip if prediction log does not exist yet
+      - name: Validate inputs
         id: precheck
-        if: steps.gate.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
         run: |
-          if [ -s artifacts_part3/prediction_log.csv ]; then
-            echo "run_backfill=true" >> "$GITHUB_OUTPUT"
-            ROWS=$(tail -n +2 artifacts_part3/prediction_log.csv | wc -l)
-            echo "Prediction log found with ${ROWS} row(s). Proceeding with backfill."
-          else
-            echo "run_backfill=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No prediction_log.csv found yet."
-            echo "Run the weekly production workflow first (weekly-production.yml)."
+          set -euo pipefail
+          if [ ! -s artifacts_part3/prediction_log.csv ]; then
+            echo "::notice::No prediction ledger exists yet."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-
-      # ── 6. Validate API keys ─────────────────────────────────────────────
-      - name: Validate API key presence
-        if: steps.precheck.outputs.run_backfill == 'true'
-        run: |
-          if [ -z "$FRED_API_KEY" ] && [ -z "$EIA_API_KEY" ]; then
-            echo "::error::Neither FRED_API_KEY nor EIA_API_KEY is set."
-            echo "At least one is required to fetch realized gas prices."
+          if [ -z "${FRED_API_KEY}" ] && [ -z "${EIA_API_KEY}" ]; then
+            echo "::error::FRED_API_KEY or EIA_API_KEY is required."
             exit 1
           fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
 
-          if [ -n "$FRED_API_KEY" ]; then
-            echo "FRED_API_KEY:  set (primary)"
-          else
-            echo "::warning::FRED_API_KEY not set — falling back to EIA API."
-          fi
-
-          if [ -n "$EIA_API_KEY" ]; then
-            echo "EIA_API_KEY:   set (fallback)"
-          fi
-
-      # ── 7. Build artifact directories if missing ─────────────────────────
-      - name: Ensure artifact directories exist
-        if: steps.precheck.outputs.run_backfill == 'true'
+      - name: Backfill exact target observations
+        if: steps.precheck.outputs.run == 'true'
         run: |
-          mkdir -p artifacts_part3 artifacts_part9 artifacts_part0
+          set -euo pipefail
+          args=()
+          if [ "${{ inputs.dry_run || false }}" = "true" ]; then args+=(--dry-run); fi
+          if [ "${{ inputs.force || false }}" = "true" ]; then args+=(--force); fi
+          python gas_backfill_realized.py "${args[@]}"
 
-      # ── 8. Run backfill ──────────────────────────────────────────────────
-      - name: Run realized price backfill
-        if: steps.precheck.outputs.run_backfill == 'true'
+      - name: Recompute eligible live attribution
+        if: steps.precheck.outputs.run == 'true' && inputs.dry_run != true
         run: |
-          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
-          if [ "$DRY_RUN" = "true" ]; then
-            echo "DRY RUN mode — auditing without writing."
-            python gas_backfill_realized.py --dry-run
-          else
-            python gas_backfill_realized.py
-          fi
-
-      # ── 9. Re-run Part 9 live attribution ────────────────────────────────
-      # Recomputes DM test, rolling MAPE, concept drift, and health status
-      # now that newly realized rows are in the prediction log.
-      - name: Re-run Part 9 live attribution
-        if: >
-          steps.precheck.outputs.run_backfill == 'true' &&
-          github.event.inputs.dry_run != 'true'
-        run: |
+          set -euo pipefail
           python gas_part9_live_attribution.py
+          python gas_release_manifest.py backfill
+          python gas_release_manifest.py verify
 
-      # ── 10. Print attribution summary ────────────────────────────────────
-      - name: Print attribution summary
-        if: steps.precheck.outputs.run_backfill == 'true'
-        run: |
-          echo "=== BACKFILL + ATTRIBUTION SUMMARY ==="
-          python - <<'EOF'
-          import json, os
-          from pathlib import Path
-
-          root = os.environ.get("GASPRICE_ROOT", ".")
-
-          # Prediction log stats
-          log_path = Path(root) / "artifacts_part3" / "prediction_log.csv"
-          if log_path.exists():
-              import csv
-              with open(log_path) as f:
-                  rows = list(csv.DictReader(f))
-              total = len(rows)
-              realized = sum(
-                  1 for r in rows
-                  if (r.get("actual") or "").strip() not in ("", "nan", "NaN")
-              )
-              print(f"  Prediction log rows:   {total}")
-              print(f"  Rows with actuals:     {realized}")
-              print(f"  Rows pending backfill: {total - realized}")
-          else:
-              print("  Prediction log not found.")
-
-          # Attribution report
-          print("")
-          report_path = Path(root) / "artifacts_part9" / "live_attribution_report.json"
-          if report_path.exists():
-              with open(report_path) as f:
-                  r = json.load(f)
-              health = r.get("model_health", {})
-              m = r.get("all_time_metrics", {})
-              dm = r.get("diebold_mariano", {})
-              drift = r.get("concept_drift", {})
-              print(f"  Health status:     {health.get('health_status', r.get('health_status', 'N/A'))}")
-              print(f"  Realized obs:      {r.get('n_realized', 0)}")
-              if m.get("mae") is not None:  print(f"  All-time MAE:      ${m['mae']:.4f}/gal")
-              if m.get("mape") is not None: print(f"  All-time MAPE:     {m['mape']:.2f}%")
-              if m.get("dir_acc") is not None: print(f"  Direction acc:     {m['dir_acc']:.1%}")
-              if r.get("beats_naive_pct") is not None:
-                  print(f"  Beats naive:       {r['beats_naive_pct']:.1f}%")
-              print(f"  DM test:           {dm.get('dm_interpretation', 'N/A')} "
-                    f"(t={dm.get('dm_t_stat', 'N/A')})")
-              print(f"  Drift status:      {drift.get('status', 'N/A')}")
-              print(f"  Recommendation:    {health.get('recommendation', 'N/A')}")
-          else:
-              print("  Attribution report not found.")
-          EOF
-
-      # ── 11. Refresh dashboard data copies ────────────────────────────────
-      # Keeps data/ in sync so the NEXT Pages deploy (triggered by the
-      # production commit — this workflow's commit carries [skip ci]) serves
-      # the freshest realized numbers.
-      - name: Refresh dashboard data copies
-        if: >
-          steps.precheck.outputs.run_backfill == 'true' &&
-          github.event.inputs.dry_run != 'true'
-        run: |
-          mkdir -p data
-          for f in \
-            artifacts_part3/prediction_log.csv \
-            artifacts_part3/gas_part3_summary.json \
+      - name: Upload immutable backfill evidence
+        if: steps.precheck.outputs.run == 'true' && inputs.dry_run != true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gas-price-backfill-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            artifacts_part3/prediction_log.csv
             artifacts_part9/live_attribution_report.json
-          do
-            [ -f "$f" ] && cp "$f" data/ && echo "Staged: $f" || true
-          done
+            artifacts_part9/live_attribution_tape.csv
+            data/release_manifest.json
 
-      # ── 12. Commit and push backfill artifacts ───────────────────────────
-      - name: Commit and push backfill artifacts
-        if: >
-          steps.precheck.outputs.run_backfill == 'true' &&
-          github.event.inputs.dry_run != 'true'
+      - name: Commit realized-evidence surface
+        id: publish
+        if: steps.precheck.outputs.run == 'true' && inputs.dry_run != true
         run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add -f \
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f -- \
             artifacts_part3/prediction_log.csv \
-            artifacts_part3/gas_part3_summary.json \
             artifacts_part9/live_attribution_report.json \
             artifacts_part9/live_attribution_tape.csv \
-            data/ || true
+            data/prediction_log.csv \
+            data/live_attribution_report.json \
+            data/live_attribution_tape.csv \
+            data/release_manifest.json
 
           if git diff --cached --quiet; then
-            echo "No backfill changes to commit."
+            echo "No newly realized evidence to commit."
+            echo "committed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          TODAY="$(date -u '+%Y-%m-%d')"
-          # [skip ci] prevents this commit from triggering a Pages redeploy loop.
-          # Pages is re-deployed by the weekly production commit, not the backfill.
-          git commit -m "Backfill realized EIA gas prices — ${TODAY}"
+          git commit -m "Backfill eligible EIA observations (${{ github.run_id }})"
+          git fetch origin "${GITHUB_REF_NAME}"
+          git rebase --autostash "origin/${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          echo "committed=true" >> "$GITHUB_OUTPUT"
 
-          # Pull with ours strategy so concurrent writes never conflict
-          git pull origin "${GITHUB_REF_NAME}" \
-            --no-rebase \
-            --strategy-option=ours \
-            --no-edit || true
-
-          git push origin HEAD:"${GITHUB_REF_NAME}"
-          echo "Backfill artifacts committed and pushed."
-
+      - name: Deploy committed evidence to Pages
+        if: steps.publish.outputs.committed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref "${GITHUB_REF_NAME}"

@@ -79,7 +79,7 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from scipy import stats
 
-from gas_time_contract import pipeline_identity, strict_json_dump
+from gas_time_contract import pipeline_identity, sha256_file, strict_json_dump
 
 warnings.filterwarnings("ignore")
 
@@ -172,9 +172,9 @@ def build_models(cfg: Part2Config) -> Dict[str, object]:
             SimpleImputer(strategy="median", keep_empty_features=True),
             HistGradientBoostingRegressor(
                 max_iter=cfg.hgb_max_iter,
-            learning_rate=cfg.hgb_learning_rate,
-            max_depth=cfg.hgb_max_depth,
-            l2_regularization=cfg.hgb_l2,
+                learning_rate=cfg.hgb_learning_rate,
+                max_depth=cfg.hgb_max_depth,
+                l2_regularization=cfg.hgb_l2,
                 random_state=cfg.seed,
             ),
         ),
@@ -241,6 +241,28 @@ def load_features(part1_dir: Path) -> Tuple[pd.DataFrame, pd.Series]:
     return X, y
 
 
+def validate_feature_lineage(part1_dir: Path) -> None:
+    """Require Part 1 inputs to be complete outputs from this pipeline run."""
+    summary_path = part1_dir / "part1_summary.json"
+    if not summary_path.exists():
+        raise ValueError("Part 1 summary is missing")
+    with summary_path.open(encoding="utf-8") as handle:
+        summary = json.load(handle)
+
+    current_run = pipeline_identity()["pipeline_run_id"]
+    if str(summary.get("pipeline_run_id", "")) != current_run:
+        raise ValueError("Part 1 summary belongs to a different pipeline run")
+
+    expected = {
+        "gas_feature_matrix.parquet": summary.get("feature_matrix_sha256"),
+        "gas_target.parquet": summary.get("target_sha256"),
+    }
+    for filename, digest in expected.items():
+        path = part1_dir / filename
+        if not digest or sha256_file(path) != str(digest):
+            raise ValueError(f"{filename} hash does not match Part 1 summary")
+
+
 NON_FEATURE_COLS = ("week_date", "is_live")
 
 
@@ -277,11 +299,6 @@ def walk_forward_train(
         raise ValueError(
             "Part 1 must provide gas_us_avg_current for the persistence baseline"
         )
-
-    all_empty = [name for name in feature_cols if X[name].notna().sum() == 0]
-    if all_empty:
-        print(f"[Part2] Dropping all-empty features: {all_empty}")
-        feature_cols = [name for name in feature_cols if name not in all_empty]
 
     X_vals = X[feature_cols].replace([np.inf, -np.inf], np.nan).values
     y_vals = pd.to_numeric(y, errors="coerce").values.astype(float)
@@ -509,16 +526,16 @@ def build_forecast_tape(
     models: Dict[str, object],
     weights: Dict[str, float],
     val_start_idx: int,
+    oof_df: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """
     Generate predictions for all rows (labeled + live) for historical analysis.
 
     FIX (Audit 2026-08):
       - Live rows are included with actual=NaN and in_sample=0.
-      - in_sample flags rows the final models were trained on. Since the
-        final refit uses ALL labeled rows, every labeled row is in-sample —
-        honest OOS history lives in the OOF file (common gate window, flagged
-        here too via oos_val=1 for convenience).
+      - in_sample flags rows predicted by the final refit. The validation
+        window is then replaced with its genuine rolling-origin predictions,
+        so rows marked oos_val=1 are honest out-of-sample values.
       - Ensemble fusion previously used fillna(0), which dragged the fused
         value toward zero wherever a model failed. Now weights renormalize
         per row over finite predictions only.
@@ -536,6 +553,9 @@ def build_forecast_tape(
     tape["oos_val"] = oos_val
     tape["is_live"] = np.concatenate([np.zeros(n_lab, dtype=int),
                                       np.ones(n_live, dtype=int)])
+    tape["pred_persistence"] = pd.to_numeric(
+        all_X["gas_us_avg_current"], errors="coerce"
+    ).values
 
     for name, model in models.items():
         try:
@@ -560,6 +580,26 @@ def build_forecast_tape(
         np.nan,
     )
     tape["pred_ensemble"] = fused
+
+    if oof_df is not None and not oof_df.empty:
+        oof = oof_df.copy()
+        oof["week_date"] = pd.to_datetime(oof["week_date"])
+        oof = oof.set_index("week_date")
+        tape_dates = pd.to_datetime(tape["week_date"])
+        overlay = tape_dates.isin(oof.index)
+        for column in (
+            "pred_hgb",
+            "pred_rf",
+            "pred_elasticnet",
+            "pred_gbm",
+            "pred_ridge",
+            "pred_ensemble",
+            "pred_persistence",
+        ):
+            if column in tape.columns and column in oof.columns:
+                mapped = tape_dates.map(oof[column])
+                tape.loc[overlay, column] = mapped.loc[overlay].to_numpy()
+        tape.loc[overlay, "in_sample"] = 0
 
     return tape
 
@@ -600,6 +640,9 @@ def write_part2_summary(
                 val_metrics.get("required_positive_folds", 0)
             ),
         },
+        "forecast_tape_sha256": sha256_file(
+            out_dir / "gas_forecast_tape.parquet"
+        ),
         **pipeline_identity(),
         "config": {
             "val_weeks": cfg.val_weeks,
@@ -629,8 +672,9 @@ def main() -> int:
 
     # Load features
     try:
+        validate_feature_lineage(part1_dir)
         X, y = load_features(part1_dir)
-    except FileNotFoundError as e:
+    except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError) as e:
         print(f"[Part2] FATAL: {e}. Run gas_part1 first.")
         return 1
 
@@ -645,7 +689,9 @@ def main() -> int:
     )
 
     # Full forecast tape (labeled + live rows)
-    tape = build_forecast_tape(X_lab, y_lab, X_live, models, weights, val_start_idx)
+    tape = build_forecast_tape(
+        X_lab, y_lab, X_live, models, weights, val_start_idx, oof_df
+    )
 
     # Live next-week forecast
     latest_preds, latest_week, is_true_live = predict_latest(

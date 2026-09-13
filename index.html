@@ -312,13 +312,13 @@
     </nav>
 
     <section class="panel active" id="overview" role="tabpanel" aria-labelledby="tab-overview">
-      <div class="status-strip"><span>Committed artifact snapshot · August 19, 2026</span><span class="status" id="dataStatus">Embedded baseline</span></div>
+      <div class="status-strip"><span id="snapshotDate">Committed artifact snapshot · August 19, 2026</span><span class="status" id="dataStatus">Embedded baseline</span></div>
       <div class="metric-grid">
         <article class="metric"><div class="metric-label">Latest observed</div><div class="metric-value" id="latestObserved">$3.864</div><div class="metric-note">Week of Aug. 10, 2026</div></article>
         <article class="metric"><div class="metric-label">Next-week forecast</div><div class="metric-value" id="ensembleForecast">$3.776</div><div class="metric-note" id="forecastWeek">Target: Aug. 17, 2026</div></article>
         <article class="metric"><div class="metric-label">Validation RMSE</div><div class="metric-value" id="ensembleRmse">$0.186</div><div class="metric-note">Core ensemble · 52 weeks</div></article>
-        <article class="metric"><div class="metric-label">Persistence RMSE</div><div class="metric-value">$0.112</div><div class="metric-note">Recomputed on same dates</div></article>
-        <article class="metric"><div class="metric-label">Live evidence</div><div class="metric-value" id="liveCount">1</div><div class="metric-note">Realized case · inference pending</div></article>
+        <article class="metric"><div class="metric-label">Persistence RMSE</div><div class="metric-value" id="persistenceRmse">$0.112</div><div class="metric-note">Recomputed on same dates</div></article>
+        <article class="metric"><div class="metric-label">Live evidence</div><div class="metric-value" id="liveCount">0</div><div class="metric-note">Eligible prospective cases</div></article>
       </div>
       <article class="card fit-card" id="fitExplorer">
         <div class="fit-header">
@@ -426,7 +426,7 @@
         <article class="card">
           <div class="card-kicker">Interpretation</div><h2>The ensemble error was 1.67× persistence.</h2>
           <p class="copy">Ridge was the best learned component, but no reported learner beat the same-window last-value forecast. XGBoost was correctly rejected, and the LSTM sleeve was not evaluated because its upstream gate failed.</p>
-          <div class="notice"><strong>Important artifact rule.</strong> The refitted forecast tape contains in-sample predictions even for rows labeled <code>oos_val</code>. Use <code>gas_oof_predictions.parquet</code> for honest learned-model trajectories.</div>
+          <div class="notice"><strong>Important artifact rule.</strong> Rows labeled <code>oos_val=1</code> now contain sequential rolling-origin predictions. Earlier rows remain post-refit diagnostics and are not validation evidence.</div>
         </article>
       </div>
       <article class="card" style="margin-top:14px">
@@ -492,7 +492,7 @@
       forecast: 3.7758,
       target: "2026-08-17",
       regime: "SUPPLY_SHOCK",
-      liveN: 1,
+      liveN: 0,
       models: { hgb: 3.7081, rf: 3.7767, gbm: 3.8007, elasticnet: 3.7832, ridge: 3.8050, ensemble: 3.7758 },
       validation: {
         persistence: { mae: .0686, rmse: .1117, mape: null, r2: null },
@@ -587,7 +587,7 @@
         const cells = line.split(",");
         const row = Object.fromEntries(header.map((name, index) => [name, cells[index]]));
         const parsed = { week_date: row.week_date, date: new Date(row.week_date + "T00:00:00Z") };
-        ["actual", "pred_hgb", "pred_rf", "pred_gbm", "pred_elasticnet", "pred_ridge", "pred_ensemble"].forEach(key => {
+        ["actual", "pred_hgb", "pred_rf", "pred_gbm", "pred_elasticnet", "pred_ridge", "pred_ensemble", "pred_persistence", "oos_val"].forEach(key => {
           const value = Number(row[key]);
           parsed[key] = row[key] !== "" && Number.isFinite(value) ? value : null;
         });
@@ -635,7 +635,8 @@
       const tooltip = document.getElementById("fitTooltip");
       const ns = "http://www.w3.org/2000/svg";
       const W = 1120, H = 430, m = { l: 58, r: 24, t: 28, b: 48 };
-      const persistence = rows.map((_, index) => {
+      const persistence = rows.map((row, index) => {
+        if (Number.isFinite(row.pred_persistence)) return row.pred_persistence;
         const source = fitRows[startIndex + index - 1];
         return source && Number.isFinite(source.actual) ? source.actual : null;
       });
@@ -786,21 +787,53 @@
         tryJson(["data/live_attribution_report.json","live_attribution_report.json"])
       ]);
       if (p2 && p2.latest_predictions) {
-        embedded.forecast = Number(p2.latest_predictions.pred_ensemble);
         Object.assign(embedded.models, {
           hgb: Number(p2.latest_predictions.pred_hgb), rf: Number(p2.latest_predictions.pred_rf), gbm: Number(p2.latest_predictions.pred_gbm),
           elasticnet: Number(p2.latest_predictions.pred_elasticnet), ridge: Number(p2.latest_predictions.pred_ridge), ensemble: Number(p2.latest_predictions.pred_ensemble)
         });
-        document.getElementById("ensembleForecast").textContent = money(embedded.forecast);
-        document.getElementById("lockedForecast").textContent = money(embedded.forecast);
-        document.getElementById("heroForecast").textContent = money(embedded.forecast) + " forecast";
-        if (p2.forecast_target_week) { document.getElementById("forecastWeek").textContent = "Target: " + p2.forecast_target_week; document.getElementById("heroTarget").textContent = "Target week: " + p2.forecast_target_week; }
         if (p2.val_metrics && p2.val_metrics.ensemble_rmse) document.getElementById("ensembleRmse").textContent = money(p2.val_metrics.ensemble_rmse);
+        if (p2.operator_validation && Number.isFinite(Number(p2.operator_validation.persistence_rmse))) {
+          embedded.validation.persistence.rmse = Number(p2.operator_validation.persistence_rmse);
+          document.getElementById("persistenceRmse").textContent = money(embedded.validation.persistence.rmse);
+        }
+        if (p2.val_metrics) {
+          ["hgb", "rf", "gbm", "elasticnet", "ridge", "ensemble"].forEach(name => {
+            ["mae", "rmse", "mape", "r2"].forEach(metric => {
+              const value = Number(p2.val_metrics[`${name}_${metric}`]);
+              if (Number.isFinite(value)) embedded.validation[name][metric] = value;
+            });
+          });
+        }
         renderModelForecasts();
+        renderValidation();
+      }
+      if (p3 && p3.latest_prediction) {
+        const governed = Number(p3.latest_prediction.pred_fusion);
+        if (Number.isFinite(governed)) {
+          embedded.forecast = governed;
+          document.getElementById("ensembleForecast").textContent = money(governed);
+          document.getElementById("lockedForecast").textContent = money(governed);
+          document.getElementById("heroForecast").textContent = money(governed) + " governed forecast";
+        }
+        const observed = Number(p3.latest_prediction.pred_persistence);
+        if (Number.isFinite(observed)) {
+          embedded.observed = observed;
+          document.getElementById("latestObserved").textContent = money(observed);
+        }
+        if (p3.latest_prediction.target_date) {
+          embedded.target = p3.latest_prediction.target_date;
+          document.getElementById("forecastWeek").textContent = "Target: " + embedded.target;
+          document.getElementById("heroTarget").textContent = "Target week: " + embedded.target;
+        }
+        if (p3.latest_prediction.decision_date) {
+          document.getElementById("snapshotDate").textContent = "Committed forecast decision · " + p3.latest_prediction.decision_date;
+        }
       }
       if (p6 && p6.latest_regime) { embedded.regime = p6.latest_regime; document.getElementById("latestRegime").textContent = p6.latest_regime; }
       if (p9 && Number.isFinite(Number(p9.n_realized))) { embedded.liveN = Number(p9.n_realized); document.getElementById("liveCount").textContent = String(embedded.liveN); }
-      document.getElementById("dataStatus").textContent = p2 || p3 || p6 || p9 ? "Live artifact telemetry" : "Embedded audited baseline";
+      document.getElementById("dataStatus").textContent = p3
+        ? `${p3.publication_mode || "UNKNOWN_MODE"} · ${p3.operator_validated ? "validated" : "not validated"}`
+        : (p2 || p6 || p9 ? "Partial artifact telemetry" : "Embedded audited baseline");
     }
 
     function animateSky() {

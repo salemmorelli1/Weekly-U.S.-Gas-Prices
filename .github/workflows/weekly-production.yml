@@ -1,75 +1,38 @@
 name: Weekly Gas Price Forecast
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Canonical weekly production pipeline for GasPriceForecast.
-#
-# FIX (Audit 2026-08): removed the non-functional `timezone` key from the
-# schedule trigger.
-#
-# ROOT CAUSE (identical to PriceCall S60 finding)
-# ────────────────────────────────────────────────
-# The previous design used:
-#
-#     - cron: "35 10 * * 1"
-#       timezone: "America/New_York"
-#
-# GitHub Actions schedule triggers on github.com do NOT support a `timezone`
-# key. The field is silently ignored — the cron fired at 10:35 UTC, which is
-# 6:35 AM EDT / 5:35 AM EST, HOURS BEFORE the Monday EIA weekly release
-# (~9:00 AM ET). Every scheduled run fetched last week's stale data and the
-# "this week" forecast row was anchored one week behind. workflow_dispatch
-# runs were unaffected, masking the bug.
-#
-# SOLUTION
-# ─────────
-# The proven dual-cron UTC pattern from the reference project:
-#   10:35 AM EDT (UTC-4, ~Mar–Nov) = 14:35 UTC  →  cron: "35 14 * * 1"
-#   10:35 AM EST (UTC-5, ~Nov–Mar) = 15:35 UTC  →  cron: "35 15 * * 1"
-# Both crons fire every Monday; a Python time gate passes the run that lands
-# in the 10:00 AM – 1:00 PM ET window and suppresses the opposing-DST-season
-# duplicate. The 180-minute window absorbs GitHub scheduler drift
-# (historically up to ~103 minutes). Manual dispatches bypass the gate.
-#
-# Execution order:
-#   Part 0  → Part 0c* → Part 6 → Part 1
-#   → Part 2 → Part 2b* → Part 2a* → Part 3 → Part 9
-#   (* optional / non-blocking)
-#
-# Secrets (Settings → Secrets → Actions):
-#   FRED_API_KEY      REQUIRED — free at https://fred.stlouisfed.org/docs/api/api_key.html
-#   EIA_API_KEY       recommended — free at https://www.eia.gov/opendata/register.php
-#                     (powers Part 0c: stocks, demand, refinery fundamentals)
-# ─────────────────────────────────────────────────────────────────────────────
-
 on:
   schedule:
-    - cron: "35 14 * * 1"   # 10:35 AM EDT (UTC-4, summer)
-    - cron: "35 15 * * 1"   # 10:35 AM EST (UTC-5, winter)
+    # EIA normally publishes Monday observations on Tuesday around 10 a.m. ET.
+    # Wednesday is a holiday/delay fallback and is idempotently suppressed
+    # when Tuesday already published the current Monday observation.
+    - cron: "30 11 * * 2"
+      timezone: "America/New_York"
+    - cron: "30 11 * * 3"
+      timezone: "America/New_York"
   workflow_dispatch:
     inputs:
       retrain:
-        description: "Force full model retraining (re-fit Part 2 from scratch)"
+        description: "Acknowledge full model retraining"
         required: false
         default: false
         type: boolean
       skip_lstm:
-        description: "Skip Part 2a LSTM sleeve (faster run)"
+        description: "Skip the optional LSTM sleeve"
         required: false
-        default: false
+        default: true
         type: boolean
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
-  # Never cancel a running forecast — always let it finish. Shared with
-  # weekly-backfill.yml so the two workflows queue instead of racing on
-  # prediction_log.csv and the attribution artifacts.
   group: gas-price-production
   cancel-in-progress: false
 
 env:
   GASPRICE_ROOT: ${{ github.workspace }}
+  GASPRICE_PIPELINE_RUN_ID: ${{ github.run_id }}
   FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
   EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -77,376 +40,190 @@ env:
 
 jobs:
   forecast:
-    name: Run weekly forecast pipeline
+    name: Run release-aware weekly pipeline
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────
-      - name: Check out repo
-        uses: actions/checkout@v5
+      - name: Check out main
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
           token: ${{ secrets.PAT_TOKEN || github.token }}
 
-      # ── 2. Python ────────────────────────────────────────────────────────
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-          cache: "pip"
-
-      # ── 3. Install dependencies ──────────────────────────────────────────
-      - name: Install dependencies
+      - name: Decide whether this release needs publication
+        id: release
+        env:
+          SCHEDULE_EXPRESSION: ${{ github.event.schedule }}
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      # ── 4. Gate key consistency guard ────────────────────────────────────
-      # REQUIRED: the gate step writes exactly one output key ("run"). Every
-      # downstream if: condition must reference that same key via
-      # steps.gate.outputs.<key>. A mismatch makes those conditions evaluate
-      # as empty-string (falsy), silently skipping the pipeline while the
-      # workflow exits green — the silent-skip failure mode documented in the
-      # reference project's April 2026 audit. This step greps the workflow
-      # file at runtime and fails loudly before the gate runs if they disagree.
-      - name: Verify gate output key is consistent throughout workflow
-        run: |
-          WORKFLOW_FILE="${GITHUB_WORKSPACE}/$(echo "${GITHUB_WORKFLOW_REF}" | sed 's|[^/]*/[^/]*/||; s|@.*||')"
-
-          WRITTEN_KEY=$(grep -oP '(?<=f\.write\(")[a-z_]+(?==)' "$WORKFLOW_FILE" | head -1)
-          if [ -z "$WRITTEN_KEY" ]; then
-            echo "ERROR: Could not extract gate output key from $WORKFLOW_FILE"
-            exit 1
-          fi
-          echo "Gate writes output key: '${WRITTEN_KEY}'"
-
-          CORRECT=$(grep -c "steps\.gate\.outputs\.${WRITTEN_KEY}" "$WORKFLOW_FILE" || true)
-          WRONG=$(grep -cP "steps\.gate\.outputs\.(?!${WRITTEN_KEY})[a-z_]+" "$WORKFLOW_FILE" || true)
-
-          echo "Downstream conditions using '${WRITTEN_KEY}': ${CORRECT}"
-          echo "Downstream conditions using a different key:  ${WRONG}"
-
-          if [ "$WRONG" -ne 0 ]; then
-            echo ""
-            echo "FATAL: gate output key mismatch — downstream steps will be silently skipped."
-            grep -nP "steps\.gate\.outputs\." "$WORKFLOW_FILE"
-            exit 1
-          fi
-          echo "OK: gate key '${WRITTEN_KEY}' is consistent throughout the workflow."
-
-      # ── 5. Time gate ─────────────────────────────────────────────────────
-      # Both crons fire every Monday; the gate passes the one that lands in
-      # the 10:00 AM – 1:00 PM ET window (typically the summer cron in EDT
-      # months, the winter cron in EST months) and suppresses the duplicate.
-      # Manual dispatches (workflow_dispatch) always proceed immediately.
-      - name: Check run window (10:00 AM - 1:00 PM ET, Mondays)
-        id: gate
-        run: |
-          python - <<'PYEOF'
-          import sys, os
-          from datetime import datetime
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timedelta
+          from pathlib import Path
           from zoneinfo import ZoneInfo
 
-          event = os.environ.get("GITHUB_EVENT_NAME", "")
-          if event == "workflow_dispatch":
-              print("Manual dispatch — skipping time gate.")
-              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-                  f.write("run=true\n")
-              sys.exit(0)
+          should_run = True
+          reason = "manual dispatch"
+          schedule = os.environ.get("SCHEDULE_EXPRESSION", "")
+          if os.environ.get("GITHUB_EVENT_NAME") == "schedule" and schedule.endswith("* * 3"):
+              today = datetime.now(ZoneInfo("America/New_York")).date()
+              current_monday = today - timedelta(days=today.weekday())
+              status_path = Path("artifacts_part3/pipeline_status.json")
+              if status_path.exists():
+                  status = json.loads(status_path.read_text(encoding="utf-8"))
+                  already_current = (
+                      status.get("status") == "SUCCESS"
+                      and status.get("source_observation_date") == current_monday.isoformat()
+                  )
+                  if already_current:
+                      should_run = False
+                      reason = f"Tuesday already published {current_monday}"
+                  else:
+                      reason = f"Wednesday fallback for {current_monday}"
+              else:
+                  reason = f"Wednesday fallback for {current_monday}; no status exists"
+          elif os.environ.get("GITHUB_EVENT_NAME") == "schedule":
+              reason = "normal Tuesday release"
 
-          now = datetime.now(ZoneInfo("America/New_York"))
-          hour, minute, weekday = now.hour, now.minute, now.weekday()
+          print(f"should_run={should_run}: {reason}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"run={'true' if should_run else 'false'}\n")
+              handle.write(f"reason={reason}\n")
+          PY
 
-          # Monday only, 10:00 AM - 1:00 PM ET: covers the 10:35 nominal
-          # trigger with generous room for GitHub scheduler drift.
-          in_window = (weekday == 0) and (10 <= hour < 13)
-          print(f"NY time: {now.strftime('%H:%M')} weekday={weekday} in_window={in_window}")
+      - name: Set up Python 3.12
+        if: steps.release.outputs.run == 'true'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-production-lock.txt
 
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"run={'true' if in_window else 'false'}\n")
-
-          if not in_window:
-              print("Outside Monday 10:00 AM - 1:00 PM ET window — skipping run.")
-          PYEOF
-
-      # ── 6. Restore accumulated artifacts from remote ─────────────────────
-      # Pulls the prediction log, trained models, and live attribution history
-      # committed by previous weekly runs. actions/checkout gives a snapshot
-      # of the commit at checkout time; the authoritative copies of the
-      # accumulating artifacts live on the remote. Without this step a run
-      # following a partial or mis-sequenced push could append to a stale or
-      # empty history (PriceCall Finding C pattern).
-      - name: Restore accumulated artifacts from remote
-        if: steps.gate.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+      - name: Install locked production dependencies
+        if: steps.release.outputs.run == 'true'
         run: |
-          git fetch origin "${GITHUB_REF_NAME}" --quiet || true
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -r requirements-production-lock.txt
 
-          for path in \
-            artifacts_part3/prediction_log.csv \
-            artifacts_part3/gas_part3_summary.json \
-            artifacts_part3/gas_fusion_tape.parquet \
-            artifacts_part2/gas_part2_models.pkl \
-            artifacts_part2/gas_part2_summary.json \
-            artifacts_part2b/gas_xgb_models.pkl \
-            artifacts_part2b/gas_part2b_summary.json \
-            artifacts_part2a/gas_lstm_model.pt \
-            artifacts_part2a/gas_part2a_summary.json \
-            artifacts_part6/gas_regime_model.pkl \
-            artifacts_part6/gas_regime_meta.json \
-            artifacts_part6/gas_regime_tape.parquet \
-            artifacts_part9/live_attribution_report.json \
-            artifacts_part9/live_attribution_tape.csv
-          do
-            git checkout "origin/${GITHUB_REF_NAME}" -- "$path" 2>/dev/null \
-              && echo "Restored: $path" \
-              || echo "Not yet in repo (first run?): $path"
-          done
-
-      # ── 7. Decide run arguments ──────────────────────────────────────────
-      - name: Decide run arguments
-        id: args
-        if: steps.gate.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+      - name: Validate API credentials
+        if: steps.release.outputs.run == 'true'
         run: |
-          ARGS="--force"
-
-          RETRAIN="${{ github.event.inputs.retrain || 'false' }}"
-          if [ "$RETRAIN" = "true" ]; then
-            ARGS="$ARGS --retrain"
-            echo "Flag: --retrain (forced full retraining)"
-          fi
-
-          SKIP_LSTM="${{ github.event.inputs.skip_lstm || 'false' }}"
-          if [ "$SKIP_LSTM" = "true" ]; then
-            ARGS="$ARGS --skip-lstm"
-            echo "Flag: --skip-lstm"
-          fi
-
-          echo "args=${ARGS}" >> "$GITHUB_OUTPUT"
-          echo "Run arguments: ${ARGS}"
-
-      # ── 8. Validate API keys ─────────────────────────────────────────────
-      - name: Validate API key presence
-        if: steps.gate.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
-        run: |
-          echo "=== API KEY AUDIT ==="
-          if [ -z "$FRED_API_KEY" ]; then
-            echo "::error::FRED_API_KEY is not set. This key is required."
-            echo "Add it at: Settings → Secrets → Actions → New repository secret"
+          set -euo pipefail
+          if [ -z "${FRED_API_KEY}" ]; then
+            echo "::error::FRED_API_KEY is required for GASREGCOVW."
             exit 1
-          else
-            echo "FRED_API_KEY:   set"
+          fi
+          if [ -z "${EIA_API_KEY}" ]; then
+            echo "::warning::EIA_API_KEY is absent; optional Part 0c will publish an empty current-run summary."
           fi
 
-          if [ -z "$EIA_API_KEY" ]; then
-            echo "::warning::EIA_API_KEY not set — Part 0c EIA fundamentals (stocks, demand, refinery) will be skipped. Free key: https://www.eia.gov/opendata/register.php"
-          else
-            echo "EIA_API_KEY:    set"
-          fi
-
-      # ── 9. Create artifact directories ───────────────────────────────────
-      - name: Create artifact directories
-        if: steps.gate.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
-        run: |
-          mkdir -p \
-            artifacts_part0 \
-            artifacts_part1 \
-            artifacts_part2 \
-            artifacts_part2a \
-            artifacts_part2b \
-            artifacts_part3 \
-            artifacts_part6 \
-            artifacts_part9 \
-            logs
-
-      # ── 10. Run the full pipeline ────────────────────────────────────────
       - name: Run weekly pipeline
-        if: steps.gate.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.release.outputs.run == 'true'
         run: |
-          python gas_run_weekly_prediction.py ${{ steps.args.outputs.args }}
+          set -euo pipefail
+          args=(--force)
+          if [ "${{ github.event.inputs.retrain || 'false' }}" = "true" ]; then
+            args+=(--retrain)
+          fi
+          if [ "${{ github.event_name != 'workflow_dispatch' || inputs.skip_lstm }}" = "true" ]; then
+            args+=(--skip-lstm)
+          fi
+          python gas_run_weekly_prediction.py "${args[@]}"
 
-      # ── 11. Verify required artifacts ────────────────────────────────────
-      - name: Verify required artifacts
-        id: verify
-        if: steps.gate.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+      - name: Stage and verify release ledger
+        if: steps.release.outputs.run == 'true'
         run: |
-          echo "=== ARTIFACT VERIFICATION ==="
-          missing=0
+          set -euo pipefail
+          python gas_release_manifest.py stage
+          python gas_release_manifest.py verify
 
-          for path in \
-            artifacts_part0/part0_summary.json \
-            artifacts_part0/gas_weekly_master.parquet \
-            artifacts_part1/gas_feature_matrix.parquet \
-            artifacts_part1/part1_summary.json \
-            artifacts_part2/gas_forecast_tape.parquet \
-            artifacts_part2/gas_part2_summary.json \
-            artifacts_part3/prediction_log.csv \
-            artifacts_part3/gas_part3_summary.json \
-            artifacts_part3/gas_fusion_tape.parquet \
-            artifacts_part6/gas_regime_meta.json \
-            artifacts_part6/gas_regime_tape.parquet \
-            artifacts_part9/live_attribution_report.json
-          do
-            if [ -f "$path" ]; then
-              echo "  OK:      $path"
-            else
-              echo "  MISSING: $path"
-              missing=$((missing + 1))
-            fi
-          done
-
-          echo "missing=$missing" >> "$GITHUB_OUTPUT"
-          echo ""
-          echo "Required missing: $missing"
-
-      # ── 12. Fail if required artifacts are missing ───────────────────────
-      - name: Fail if required artifacts are missing
-        if: >
-          (steps.gate.outputs.run == 'true' || github.event_name == 'workflow_dispatch') &&
-          steps.verify.outputs.missing != '0'
+      - name: Verify strict JSON publication files
+        if: steps.release.outputs.run == 'true'
         run: |
-          echo "::error::${{ steps.verify.outputs.missing }} required artifact(s) missing."
-          echo "The pipeline did not produce all expected outputs."
-          echo "Check the 'Run weekly pipeline' step logs above for errors."
-          exit 1
-
-      # ── 13. Print forecast summary ───────────────────────────────────────
-      - name: Print forecast summary
-        if: steps.gate.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
-        run: |
-          echo "=== LATEST WEEKLY FORECAST ==="
-          python - <<'EOF'
-          import json, os
+          set -euo pipefail
+          python - <<'PY'
+          import json
           from pathlib import Path
 
-          root = os.environ.get("GASPRICE_ROOT", ".")
+          def reject(token):
+              raise ValueError(f"non-standard JSON constant: {token}")
 
-          def money(v):
-              # FIX (Audit 2026-08): the previous f-string applied :.3f to the
-              # 'N/A' fallback string and crashed the summary step whenever a
-              # field was missing. Guard the numeric formats.
-              try:
-                  return f"${float(v):.3f}/gal"
-              except (TypeError, ValueError):
-                  return "N/A"
+          for path in sorted(Path("data").glob("*.json")):
+              with path.open(encoding="utf-8") as handle:
+                  json.load(handle, parse_constant=reject)
+              print(f"strict JSON: {path}")
+          PY
 
-          summary_path = Path(root) / "artifacts_part3" / "gas_part3_summary.json"
-          if summary_path.exists():
-              with open(summary_path) as f:
-                  s = json.load(f)
-              pred = s.get("latest_prediction", {})
-              weights = s.get("fusion_weights", {})
-              print(f"  Decision date:   {pred.get('decision_date', 'N/A')}")
-              print(f"  Anchor week:     {pred.get('anchor_week', 'N/A')}")
-              print(f"  Target date:     {pred.get('target_date', 'N/A')}")
-              print(f"  Live forecast:   {bool(pred.get('is_live_forecast', 0))}")
-              print(f"  Fusion forecast: {money(pred.get('pred_fusion'))}")
-              print(f"  Confidence:      {pred.get('confidence', 'N/A')}")
-              print(f"  Regime:          {pred.get('regime', 'N/A')}")
-              print(f"  Active sleeves:  {s.get('active_sleeves', [])}")
-              print(f"  Fusion weights:  {weights}")
-          else:
-              print("  Part 3 summary not found.")
+      - name: Upload immutable research evidence
+        if: steps.release.outputs.run == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gas-price-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            artifacts_part0/
+            artifacts_part1/
+            artifacts_part2/
+            artifacts_part2a/
+            artifacts_part2b/
+            artifacts_part3/
+            artifacts_part6/
+            artifacts_part9/
+            data/release_manifest.json
 
-          print("")
-          print("=== MODEL HEALTH ===")
-          report_path = Path(root) / "artifacts_part9" / "live_attribution_report.json"
-          if report_path.exists():
-              with open(report_path) as f:
-                  r = json.load(f)
-              health = r.get("model_health", {})
-              m = r.get("all_time_metrics", {})
-              dm = r.get("diebold_mariano", {})
-              print(f"  Health status:  {health.get('health_status', r.get('health_status', 'N/A'))}")
-              print(f"  Realized obs:   {r.get('n_realized', 0)}")
-              if m.get("mae") is not None:  print(f"  All-time MAE:   {money(m['mae'])}")
-              if m.get("mape") is not None: print(f"  All-time MAPE:  {m['mape']:.2f}%")
-              if m.get("dir_acc") is not None: print(f"  Direction acc:  {m['dir_acc']:.1%}")
-              print(f"  DM test:        {dm.get('dm_interpretation', 'N/A')}")
-              print(f"  Recommendation: {health.get('recommendation', 'N/A')}")
-          else:
-              print("  Attribution report not found.")
-          EOF
-
-      # ── 14. Stage dashboard data ─────────────────────────────────────────
-      # The dashboard (index.html) fetches flat filenames from the site root:
-      # gas_part2_summary.json, gas_part3_summary.json, prediction_log.csv,
-      # etc. Copy them into data/ so pages.yml can serve them. Without this
-      # step the dashboard 404s on every data file (Audit 2026-08 finding).
-      - name: Stage dashboard data
-        if: steps.gate.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+      - name: Commit reviewable publication surface
+        id: publish
+        if: steps.release.outputs.run == 'true'
         run: |
-          mkdir -p data
-          for f in \
-            artifacts_part2/gas_part2_summary.json \
-            artifacts_part2b/gas_part2b_summary.json \
-            artifacts_part2a/gas_part2a_summary.json \
-            artifacts_part3/gas_part3_summary.json \
-            artifacts_part3/prediction_log.csv \
-            artifacts_part6/gas_regime_meta.json \
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          paths=(
+            artifacts_part0/part0_summary.json
+            artifacts_part0/part0c_summary.json
+            artifacts_part1/part1_summary.json
+            artifacts_part2/gas_part2_summary.json
+            artifacts_part2/gas_forecast_tape.csv
+            artifacts_part2/gas_oof_predictions.csv
+            artifacts_part3/gas_part3_summary.json
+            artifacts_part3/pipeline_status.json
+            artifacts_part3/prediction_log.csv
+            artifacts_part6/gas_regime_meta.json
             artifacts_part9/live_attribution_report.json
+            artifacts_part9/live_attribution_tape.csv
+            data
+          )
+          for optional in \
+            artifacts_part2a/gas_part2a_summary.json \
+            artifacts_part2b/gas_part2b_summary.json
           do
-            [ -f "$f" ] && cp "$f" data/ && echo "Staged: $f" \
-              || echo "Not present (skipped): $f"
+            if [ -f "$optional" ]; then paths+=("$optional"); fi
           done
+          git add -f -- "${paths[@]}"
 
-      # ── 15. Commit and push all forecast artifacts ───────────────────────
-      # NOTE: no [skip ci] here — this commit is what triggers pages.yml to
-      # redeploy the dashboard (mirrors the PriceCall S60 F1 fix). The
-      # backfill workflow keeps [skip ci] intentionally.
-      - name: Commit and push forecast artifacts
-        if: steps.gate.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Stage all artifact directories, forcing past .gitignore
-          git add -f \
-            artifacts_part0/ \
-            artifacts_part1/ \
-            artifacts_part2/ \
-            artifacts_part3/ \
-            artifacts_part6/ \
-            artifacts_part9/ \
-            data/ || true
-
-          # Optional sleeve dirs — only exist when sleeves ran
-          git add -f artifacts_part2b/ 2>/dev/null || true
-          git add -f artifacts_part2a/ 2>/dev/null || true
-
-          # Exit cleanly if nothing changed
           if git diff --cached --quiet; then
-            echo "No artifact changes to commit."
+            echo "No publication changes to commit."
+            echo "committed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          TODAY="$(date -u '+%Y-%m-%d')"
-          git commit -m "Weekly gas price forecast artifacts — ${TODAY}"
+          git commit -m "Publish weekly gas forecast release ledger (${{ github.run_id }})"
+          git fetch origin "${GITHUB_REF_NAME}"
+          git rebase --autostash "origin/${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          echo "committed=true" >> "$GITHUB_OUTPUT"
 
-          # Pull with ours strategy so concurrent writes don't conflict
-          git pull origin "${GITHUB_REF_NAME}" \
-            --no-rebase \
-            --strategy-option=ours \
-            --no-edit || true
+      - name: Deploy committed release to Pages
+        if: steps.publish.outputs.committed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref "${GITHUB_REF_NAME}"
 
-          git push origin HEAD:"${GITHUB_REF_NAME}"
-          echo "Artifacts committed and pushed."
-
-      # ── 16. Upload artifacts to GitHub Actions UI ────────────────────────
-      # Kept as a secondary backup; the primary record is the git commit above.
-      - name: Upload artifacts to GitHub Actions UI
-        uses: actions/upload-artifact@v4
-        if: always() && (steps.gate.outputs.run == 'true' || github.event_name == 'workflow_dispatch')
-        with:
-          name: gas-forecast-${{ github.run_id }}
-          retention-days: 90
-          path: |
-            artifacts_part3/prediction_log.csv
-            artifacts_part3/gas_part3_summary.json
-            artifacts_part3/gas_fusion_tape.csv
-            artifacts_part9/live_attribution_report.json
-            artifacts_part9/live_attribution_tape.csv
-            artifacts_part2/gas_part2_summary.json
-            artifacts_part2b/gas_part2b_summary.json
-            artifacts_part2a/gas_part2a_summary.json
-            artifacts_part6/gas_regime_meta.json
+      - name: Report idempotent skip
+        if: steps.release.outputs.run != 'true'
+        run: echo "No pipeline run required — ${{ steps.release.outputs.reason }}."

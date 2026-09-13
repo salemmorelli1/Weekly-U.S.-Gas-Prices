@@ -194,11 +194,15 @@ def load_realized_rows(predlog_path: Path) -> pd.DataFrame:
 def compute_all_time_metrics(df: pd.DataFrame) -> Dict[str, float]:
     y_true = df["actual"].values
     y_pred = df["pred_fusion"].values
+    direction = pd.to_numeric(
+        df.get("direction_correct", pd.Series(np.nan, index=df.index)),
+        errors="coerce",
+    )
     return {
         "mae":         _mae(y_true, y_pred),
         "rmse":        _rmse(y_true, y_pred),
         "mape":        _mape(y_true, y_pred),
-        "dir_acc":     _dir_acc(y_true, y_pred),
+        "dir_acc":     float(direction.mean()) if direction.notna().any() else np.nan,
         "n_realized":  int(np.sum(np.isfinite(y_true))),
     }
 
@@ -210,11 +214,19 @@ def compute_rolling_metrics(df: pd.DataFrame, windows: Tuple[int, ...]) -> Dict[
         tail = df.tail(w)
         y_true = tail["actual"].values
         y_pred = tail["pred_fusion"].values
+        direction = pd.to_numeric(
+            tail.get(
+                "direction_correct", pd.Series(np.nan, index=tail.index)
+            ),
+            errors="coerce",
+        )
         result[f"rolling_{w}w"] = {
             "mae":     _mae(y_true, y_pred),
             "rmse":    _rmse(y_true, y_pred),
             "mape":    _mape(y_true, y_pred),
-            "dir_acc": _dir_acc(y_true, y_pred),
+            "dir_acc": (
+                float(direction.mean()) if direction.notna().any() else np.nan
+            ),
             "n":       int(np.sum(np.isfinite(y_true))),
         }
     return result
@@ -439,10 +451,26 @@ def main() -> int:
             "n_realized": 0,
             "health_status": "INSUFFICIENT_DATA",
             "message": "No realized rows in prediction log yet.",
+            "cohort_contract": "prospective_exact_target_only",
+            "min_required": cfg.min_realized_n,
         }
         summary.update(pipeline_identity())
+        empty_tape = out_dir / "live_attribution_tape.csv"
+        pd.DataFrame(
+            columns=[
+                "decision_date",
+                "target_date",
+                "pred_fusion",
+                "pred_persistence",
+                "actual",
+                "error",
+                "abs_error",
+                "beats_naive",
+            ]
+        ).to_csv(empty_tape, index=False)
         path = out_dir / "live_attribution_report.json"
         strict_json_dump(summary, path)
+        print(f"[Part9] Attribution tape -> {empty_tape}")
         print(f"[Part9] Report -> {path}")
         return 0
 
@@ -523,6 +551,7 @@ def main() -> int:
     attr_df["naive_error"]    = attr_df["actual"] - attr_df["naive_pred"]
     attr_df["naive_abs_error"] = attr_df["naive_error"].abs()
     attr_df["beats_naive"]    = attr_df["abs_error"] < attr_df["naive_abs_error"]
+    comparable = attr_df["naive_abs_error"].notna() & attr_df["abs_error"].notna()
 
     attr_path = out_dir / "live_attribution_tape.csv"
     attr_df.to_csv(attr_path, index=False)
@@ -533,21 +562,40 @@ def main() -> int:
         "script_version": SCRIPT_VERSION,
         "run_utc": datetime.now(timezone.utc).isoformat(),
         "n_realized": n,
-        "all_time_metrics": {k: round(v, 4) if np.isfinite(v) else None
-                              for k, v in all_time.items()},
+        "all_time_metrics": {
+            k: (
+                int(v)
+                if k == "n_realized"
+                else round(float(v), 4)
+                if np.isfinite(v)
+                else None
+            )
+            for k, v in all_time.items()
+        },
         "naive_metrics": {k: round(v, 4) if isinstance(v, float) and np.isfinite(v) else None
                           for k, v in naive.items()},
         "rolling_metrics": {
-            window: {mk: round(mv, 4) if isinstance(mv, float) and np.isfinite(mv) else None
-                     for mk, mv in m.items()}
+            window: {
+                mk: (
+                    int(mv)
+                    if mk == "n"
+                    else round(float(mv), 4)
+                    if np.isfinite(mv)
+                    else None
+                )
+                for mk, mv in m.items()
+            }
             for window, m in rolling.items()
         },
         "diebold_mariano": dm_result,
         "concept_drift": {k: (round(v, 4) if isinstance(v, float) and np.isfinite(v) else v)
                           for k, v in drift.items()},
         "model_health": health,
-        "beats_naive_pct": round(float(attr_df["beats_naive"].mean() * 100), 1)
-            if "beats_naive" in attr_df.columns else None,
+        "beats_naive_pct": (
+            round(float(attr_df.loc[comparable, "beats_naive"].mean() * 100), 1)
+            if comparable.any()
+            else None
+        ),
         "cohort_contract": "prospective_exact_target_only",
         **pipeline_identity(),
     }

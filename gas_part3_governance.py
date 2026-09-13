@@ -75,6 +75,7 @@ from gas_time_contract import (
     eastern_today,
     pipeline_identity,
     protocol_eligible_record,
+    sha256_file,
     strict_json_dump,
     validate_prospective_forecast,
 )
@@ -449,6 +450,8 @@ def upsert_prediction_log(
         df["target_date"].astype(str).str.strip().eq(target)
     ]
     if len(existing):
+        if len(existing) != 1:
+            raise RuntimeError(f"duplicate immutable ledger rows for target {target}")
         index = existing[0]
         old = pd.to_numeric(
             pd.Series([df.at[index, "pred_fusion"]]), errors="coerce"
@@ -461,7 +464,13 @@ def upsert_prediction_log(
         print(f"[Part3] Immutable target {target} already published; no rewrite.")
     else:
         addition = pd.DataFrame([new_row]).reindex(columns=PREDLOG_COLUMNS)
-        df = pd.concat([df.reindex(columns=PREDLOG_COLUMNS), addition], ignore_index=True)
+        if df.empty:
+            df = addition.reset_index(drop=True)
+        else:
+            df = pd.concat(
+                [df.reindex(columns=PREDLOG_COLUMNS), addition],
+                ignore_index=True,
+            )
         print(f"[Part3] Appended immutable prediction row for target {target}")
 
     sort_key = pd.to_datetime(df["target_date"], errors="coerce")
@@ -495,8 +504,21 @@ def write_part3_summary(
             "is_live_forecast":  int(new_row.get("is_live_forecast", 0) or 0),
             "pred_fusion":       (float(new_row.get("pred_fusion"))
                                   if pd.notna(new_row.get("pred_fusion", np.nan)) else None),
+            "pred_candidate":    (float(new_row.get("pred_candidate"))
+                                  if pd.notna(new_row.get("pred_candidate", np.nan)) else None),
+            "pred_persistence":  (float(new_row.get("pred_persistence"))
+                                  if pd.notna(new_row.get("pred_persistence", np.nan)) else None),
             "confidence":        str(new_row.get("confidence", "")),
             "regime":            str(new_row.get("regime_label", "")),
+            "operator_validated": bool(new_row.get("operator_validated", 0)),
+            "publication_mode": str(
+                new_row.get("publication_mode", "FAIL_CLOSED")
+            ),
+            "pipeline_run_id": str(new_row.get("pipeline_run_id", "")),
+            "pipeline_run_attempt": str(
+                new_row.get("pipeline_run_attempt", "")
+            ),
+            "source_code_sha": str(new_row.get("source_code_sha", "")),
         },
         "prediction_log_rows": predlog_len,
         "operator_validated": bool(new_row.get("operator_validated", 0)),
@@ -506,6 +528,37 @@ def write_part3_summary(
     path = out_dir / "gas_part3_summary.json"
     strict_json_dump(summary, path)
     print(f"[Part3] Summary -> {path}")
+
+
+def validate_core_lineage(
+    root: Path,
+    cfg: Part3Config,
+    summaries: Dict[str, Optional[Dict]],
+) -> None:
+    """Require Part 0, Part 2 summary, and Part 2 tape to be one run."""
+    part0 = _safe_load_json(
+        root / cfg.part0_dir_name / "part0_summary.json"
+    )
+    part2 = summaries.get("part2")
+    if not part0 or not part2:
+        raise ValueError("Part 0 and Part 2 summaries are required")
+
+    run0 = str(part0.get("pipeline_run_id", ""))
+    run2 = str(part2.get("pipeline_run_id", ""))
+    if not run0 or run0 != run2:
+        raise ValueError("Part 0 and Part 2 pipeline run IDs disagree")
+    if run0 != pipeline_identity()["pipeline_run_id"]:
+        raise ValueError("Core artifacts belong to a different pipeline run")
+
+    source0 = str(part0.get("freshness", {}).get("latest_week", ""))
+    source2 = str(part2.get("forecast_anchor_week", ""))
+    if not source0 or source0 != source2:
+        raise ValueError("Part 0 source week and Part 2 anchor disagree")
+
+    tape_path = root / cfg.part2_dir_name / "gas_forecast_tape.parquet"
+    expected_hash = str(part2.get("forecast_tape_sha256", ""))
+    if not expected_hash or sha256_file(tape_path) != expected_hash:
+        raise ValueError("Part 2 forecast tape hash does not match its summary")
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -524,6 +577,12 @@ def main() -> int:
     summaries = load_sleeve_summaries(root, cfg)
     tapes     = load_forecast_tapes(root, cfg)
     regime    = load_regime_tape(root, cfg)
+
+    try:
+        validate_core_lineage(root, cfg, summaries)
+    except (OSError, ValueError) as exc:
+        print(f"[Part3] FATAL: lineage validation failed: {exc}")
+        return 1
 
     if tapes.get("part2") is None:
         print("[Part3] FATAL: Part2 forecast tape not found. Run gas_part2 first.")
@@ -590,14 +649,25 @@ def main() -> int:
     assert len(verify) == len(df_log), "Prediction log row count mismatch after write"
     print(f"[Part3] Prediction log -> {predlog_path} ({len(df_log)} rows)")
 
-    write_part3_summary(out_dir, new_row, weights, active_sleeves, len(df_log))
+    target_mask = df_log["target_date"].astype(str).eq(
+        str(new_row.get("target_date"))
+    )
+    published_row = df_log.loc[target_mask].iloc[0]
+    write_part3_summary(
+        out_dir, published_row, weights, active_sleeves, len(df_log)
+    )
     strict_json_dump(
         {
             "status": "SUCCESS",
-            "source_observation_date": str(new_row.get("anchor_week")),
-            "target_date": str(new_row.get("target_date")),
-            "operator_validated": bool(new_row.get("operator_validated", 0)),
-            "publication_mode": str(new_row.get("publication_mode")),
+            "source_observation_date": str(published_row.get("anchor_week")),
+            "target_date": str(published_row.get("target_date")),
+            "operator_validated": bool(
+                published_row.get("operator_validated", 0)
+            ),
+            "publication_mode": str(published_row.get("publication_mode")),
+            "prediction_pipeline_run_id": str(
+                published_row.get("pipeline_run_id", "")
+            ),
             **pipeline_identity(),
         },
         out_dir / "pipeline_status.json",

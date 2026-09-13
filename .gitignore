@@ -37,9 +37,9 @@ logs/
 secrets.json
 
 # Generated artifacts — do not track rebuildable outputs.
-# The GitHub Actions workflows deliberately commit the accumulating subset
-# (prediction_log.csv, summary JSONs, model pickles, live attribution) with
-# `git add -f`, which overrides these rules. Everything else stays local.
+# GitHub Actions commits only the small publication subset (summaries, CSV
+# evidence, status, and the prediction ledger) with `git add -f`. Model
+# binaries, parquet intermediates, and databases remain workflow artifacts.
 artifacts_part0/
 artifacts_part1/
 artifacts_part2/

@@ -72,7 +72,7 @@ import numpy as np
 import pandas as pd
 import requests
 
-from gas_time_contract import pipeline_identity, strict_json_dump
+from gas_time_contract import pipeline_identity, sha256_file, strict_json_dump
 
 warnings.filterwarnings("ignore")
 
@@ -351,6 +351,11 @@ def write_part0c_summary(
         "history_start": cfg.history_start,
         "history_end": cfg.history_end,
         "fundamental_availability_lag_weeks": 1,
+        "master_parquet_sha256": (
+            sha256_file(out_dir / "gas_weekly_master.parquet")
+            if (out_dir / "gas_weekly_master.parquet").exists()
+            else None
+        ),
         **pipeline_identity(),
     }
     path = out_dir / "part0c_summary.json"

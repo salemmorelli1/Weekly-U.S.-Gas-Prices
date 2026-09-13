@@ -1,0 +1,62 @@
+name: Release ledger controls
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "codex/**"
+
+permissions:
+  contents: read
+
+jobs:
+  causal-controls:
+    name: Compile, lint, and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-ci-lock.txt
+
+      - name: Install locked CI dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -r requirements-ci-lock.txt
+
+      - name: Compile every tracked Python file
+        run: |
+          set -euo pipefail
+          python -m py_compile $(git ls-files '*.py')
+
+      - name: Run fatal-error lint checks
+        run: |
+          set -euo pipefail
+          python -m ruff check --select E9,F63,F7,F82 .
+
+      - name: Run regression suite
+        run: |
+          set -euo pipefail
+          python -m pytest -q
+
+      - name: Parse workflow YAML
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          for path in sorted(Path(".github/workflows").glob("*.yml")):
+              with path.open(encoding="utf-8") as handle:
+                  value = yaml.safe_load(handle)
+              if not isinstance(value, dict):
+                  raise ValueError(f"workflow is not a mapping: {path}")
+              print(f"parsed: {path}")
+          PY
