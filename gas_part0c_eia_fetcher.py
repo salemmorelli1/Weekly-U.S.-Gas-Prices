@@ -72,9 +72,11 @@ import numpy as np
 import pandas as pd
 import requests
 
+from gas_time_contract import pipeline_identity, strict_json_dump
+
 warnings.filterwarnings("ignore")
 
-SCRIPT_VERSION = "GAS_PART0C_V1_CANONICAL"
+SCRIPT_VERSION = "GAS_PART0C_V2_CAUSAL_AVAILABILITY"
 
 EIA_API_BASE = "https://api.eia.gov/v2"
 
@@ -194,8 +196,12 @@ class EIAClient:
             except requests.exceptions.HTTPError as e:
                 print(f"[Part0c] HTTP error {e} for {series_id} attempt {attempt + 1}")
                 if hasattr(e, 'response') and e.response is not None:
-                    if e.response.status_code == 403:
-                        print("[Part0c] FATAL: Invalid EIA API key.")
+                    status = e.response.status_code
+                    if 400 <= status < 500 and status != 429:
+                        print(
+                            f"[Part0c] Permanent HTTP {status}; "
+                            "not retrying this series."
+                        )
                         return pd.Series(dtype=float, name=series_id)
             except requests.exceptions.RequestException as e:
                 print(f"[Part0c] Request error for {series_id}: {e} (attempt {attempt + 1})")
@@ -238,6 +244,22 @@ def compute_eia_derived_features(df: pd.DataFrame, cfg: Part0cConfig) -> pd.Data
     All features are strictly backward-looking (no look-ahead bias).
     """
     df = df.copy()
+
+    # Weekly Petroleum Status Report fundamentals are published after their
+    # period ends. Shift raw non-price fields one full weekly row so a feature
+    # can never use a value unavailable at the corresponding decision time.
+    price_columns = {
+        "eia_gas_us_regular",
+        "eia_gas_us_midgrade",
+        "eia_gas_us_premium",
+        "eia_gas_us_diesel",
+    }
+    availability_lagged = [
+        name for name in EIA_SERIES
+        if name in df.columns and name not in price_columns
+    ]
+    if availability_lagged:
+        df[availability_lagged] = df[availability_lagged].shift(1)
 
     # --- Days-of-supply (stocks / (demand_per_day)) ---
     if "eia_gas_stocks_total" in df.columns and "eia_gas_demand" in df.columns:
@@ -328,10 +350,11 @@ def write_part0c_summary(
         "coverage_n_obs": coverage,
         "history_start": cfg.history_start,
         "history_end": cfg.history_end,
+        "fundamental_availability_lag_weeks": 1,
+        **pipeline_identity(),
     }
     path = out_dir / "part0c_summary.json"
-    with open(path, "w") as f:
-        json.dump(summary, f, indent=2, default=str)
+    strict_json_dump(summary, path)
     print(f"[Part0c] Summary -> {path}")
 
 
