@@ -68,11 +68,13 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+from gas_time_contract import pipeline_identity, strict_json_dump
 from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("ignore")
 
-SCRIPT_VERSION = "GAS_PART1_V1_CANONICAL"
+SCRIPT_VERSION = "GAS_PART1_V2_CAUSAL_FEATURES"
 
 
 @dataclass(frozen=True)
@@ -309,6 +311,12 @@ def build_feature_matrix(
     df["week_date"] = pd.to_datetime(df["week_date"])
     df = df.sort_values("week_date").reset_index(drop=True)
 
+    # The release observation itself is known at decision time and is the
+    # mandatory same-window persistence comparator.
+    df["gas_us_avg_current"] = pd.to_numeric(
+        df.get("gas_us_avg"), errors="coerce"
+    )
+
     print("[Part1] Building lag features...")
     df = add_lag_features(df, "gas_us_avg", cfg.lag_windows)
 
@@ -340,8 +348,11 @@ def build_feature_matrix(
     print("[Part1] Building EIA ratio features...")
     df = add_eia_ratio_features(df)
 
-    print("[Part1] Merging regime features...")
-    df = add_regime_features(df, regime_tape)
+    # Part 6 fits a descriptive full-history regime model. Feeding its states
+    # into validation would leak future distribution information, so it is
+    # deliberately excluded from the predictive matrix.
+    if regime_tape is not None and not regime_tape.empty:
+        print("[Part1] Regime tape retained for diagnostics; predictive use disabled.")
 
     # Build target
     y = build_target(df, cfg)
@@ -373,6 +384,13 @@ def build_feature_matrix(
         and c not in exclude_cols
         and not c.startswith("regime_prob_")
     ]
+    for name in feature_cols:
+        df[name] = pd.to_numeric(df[name], errors="coerce")
+    df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan)
+    all_empty = [name for name in feature_cols if df[name].notna().sum() == 0]
+    if all_empty:
+        print(f"[Part1] Dropping all-empty features: {all_empty}")
+        feature_cols = [name for name in feature_cols if name not in all_empty]
 
     X_df = df[["week_date"] + feature_cols].copy()
     X_df["target_gas_price"] = y.values
@@ -464,10 +482,11 @@ def write_part1_summary(
         },
         "high_nan_features": high_nan,
         "horizon_weeks": cfg.horizon_weeks,
+        "predictive_regime_features_enabled": False,
+        **pipeline_identity(),
     }
     path = out_dir / "part1_summary.json"
-    with open(path, "w") as f:
-        json.dump(summary, f, indent=2, default=str)
+    strict_json_dump(summary, path)
     print(f"[Part1] Summary -> {path}")
     if high_nan:
         print(f"[Part1] WARN: {len(high_nan)} features with >10% NaN: "
