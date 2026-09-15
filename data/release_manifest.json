@@ -1,0 +1,64 @@
+{
+  "schema_version": "GAS_RELEASE_MANIFEST_V1",
+  "generated_utc": "2026-09-15T19:12:02.813571+00:00",
+  "pipeline_run_id": "35011816348",
+  "prediction_pipeline_run_id": "35011816348",
+  "source_observation_date": "2026-09-14",
+  "target_date": "2026-09-21",
+  "operator_validated": "false",
+  "publication_mode": "FAIL_CLOSED_PERSISTENCE",
+  "files": {
+    "gas_forecast_tape.csv": {
+      "sha256": "4322da4c36ee60f1776ead3e43ee70fccc1d782f6ca5eae641a960439602d99d",
+      "size_bytes": 195351
+    },
+    "gas_oof_predictions.csv": {
+      "sha256": "c6a2c2b6608d17584a2513a70ceaba5b515a849025e300fcaa10b96d52118706",
+      "size_bytes": 14417
+    },
+    "gas_part2_summary.json": {
+      "sha256": "7f60edff79ea28bef338492cd96cd58e94b3729b26264a1f401702eb2e82126a",
+      "size_bytes": 2572
+    },
+    "gas_part2b_summary.json": {
+      "sha256": "cc91a9d586b160d91e266efbdc623a449ec2024b774f027574a73fe5a4b666cc",
+      "size_bytes": 712
+    },
+    "gas_part3_summary.json": {
+      "sha256": "46ba3a422975d36819b0771e991e49a06e575aef51d0dfd7a3d88c0ea8314734",
+      "size_bytes": 961
+    },
+    "gas_regime_meta.json": {
+      "sha256": "c0cfc049191260b11c82da8ca827e43eb5d40883d649954e7fc0b0fa7c9edd5a",
+      "size_bytes": 948
+    },
+    "live_attribution_report.json": {
+      "sha256": "eb9a136fb0f55e106603015861938a330305d3ff23b470fdf67cafb9355001ed",
+      "size_bytes": 427
+    },
+    "live_attribution_tape.csv": {
+      "sha256": "255d9e8728f8849ff70ad1916b85afc97089122671e62fcb34641c228cdd22a1",
+      "size_bytes": 90
+    },
+    "part0_summary.json": {
+      "sha256": "1d83ce3dd6daad68b6e795bf9e1adab2aed1eea69e19d167944153a3e23ea5a2",
+      "size_bytes": 1151
+    },
+    "part0c_summary.json": {
+      "sha256": "4401fa5c6aef45324819e741f6b6d4c530fc0d30072a61e8c7c755eb1de2eabb",
+      "size_bytes": 1442
+    },
+    "part1_summary.json": {
+      "sha256": "598c437587e903eb2b2eef39477384fe205293a674a0e776fdb6d4361126685a",
+      "size_bytes": 3226
+    },
+    "pipeline_status.json": {
+      "sha256": "7b6fc7ed67e626276d71d33937a03f1fd784ea2dc19135bbd762502081e2fd48",
+      "size_bytes": 359
+    },
+    "prediction_log.csv": {
+      "sha256": "63c7173e55085ffaa7cdf11c225eae21cb31f0877e1a44678da85d264c4914d8",
+      "size_bytes": 924
+    }
+  }
+}

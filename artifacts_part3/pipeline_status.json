@@ -1,0 +1,11 @@
+{
+  "status": "SUCCESS",
+  "source_observation_date": "2026-09-14",
+  "target_date": "2026-09-21",
+  "operator_validated": false,
+  "publication_mode": "FAIL_CLOSED_PERSISTENCE",
+  "prediction_pipeline_run_id": "35011816348",
+  "pipeline_run_id": "35011816348",
+  "pipeline_run_attempt": "1",
+  "source_code_sha": "6789ff8539cd3bea806381f1b8d105f11d9e0414"
+}
