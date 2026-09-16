@@ -1,6 +1,6 @@
 {
   "schema_version": "GAS_RELEASE_MANIFEST_V1",
-  "generated_utc": "2026-09-15T19:12:02.813571+00:00",
+  "generated_utc": "2026-09-16T19:52:08.983067+00:00",
   "pipeline_run_id": "35011816348",
   "prediction_pipeline_run_id": "35011816348",
   "source_observation_date": "2026-09-14",
@@ -33,7 +33,7 @@
       "size_bytes": 948
     },
     "live_attribution_report.json": {
-      "sha256": "eb9a136fb0f55e106603015861938a330305d3ff23b470fdf67cafb9355001ed",
+      "sha256": "fe539d87df68ec7d1abe441cbc946f4773a05162922b366e953359fc2bf9bb35",
       "size_bytes": 427
     },
     "live_attribution_tape.csv": {
@@ -57,8 +57,9 @@
       "size_bytes": 359
     },
     "prediction_log.csv": {
-      "sha256": "63c7173e55085ffaa7cdf11c225eae21cb31f0877e1a44678da85d264c4914d8",
-      "size_bytes": 924
+      "sha256": "b123c3559259ec6087ec6af1c68fbbd0eba6270cb4b2238d5542e25fd8430178",
+      "size_bytes": 928
     }
-  }
+  },
+  "last_backfill_run_id": "35143054946"
 }

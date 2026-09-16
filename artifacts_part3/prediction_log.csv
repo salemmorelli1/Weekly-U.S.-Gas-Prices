@@ -1,4 +1,4 @@
 decision_date,target_date,anchor_week,week_date,is_live_forecast,protocol_eligible,pred_fusion,pred_candidate,pred_persistence,pred_part2,pred_part2b,pred_part2a,actual,actual_date,mae,rmse,mape,direction_correct,confidence,publication_mode,operator_validated,regime_label,sleeve_spread_pct,schema_version,run_utc,pipeline_run_id,pipeline_run_attempt,source_code_sha
 2026-08-10,2026-08-10,,2026-08-03,1,0,3.9373,,,3.9373,,,3.864,2026-08-10,0.0733,0.0733,1.897,0.0,LOW_CONF,,,SUPPLY_SHOCK_3,0.0,V1_WEEKLY,2026-08-10T16:26:08.547142+00:00,,,
 2026-08-18,2026-08-17,,2026-08-10,1,0,3.7758,,,3.7758,,,,,,,,,LOW_CONF,,,SUPPLY_SHOCK,0.0,V1_WEEKLY,2026-08-18T00:44:39.209423+00:00,,,
-2026-09-15,2026-09-21,2026-09-14,2026-09-14,1,1,4.168,4.053,4.168,4.053,,,,,,,,,NOT_VALIDATED,FAIL_CLOSED_PERSISTENCE,0.0,NORMAL__STATE_0,0.0,V2_RELEASE_LEDGER,2026-09-15T19:12:01.137796+00:00,35011816348,1,6789ff8539cd3bea806381f1b8d105f11d9e0414
+2026-09-15,2026-09-21,2026-09-14,2026-09-14,1,1,4.168,4.053,4.168,4.053,,,,,,,,,NOT_VALIDATED,FAIL_CLOSED_PERSISTENCE,0.0,NORMAL__STATE_0,0.0,V2_RELEASE_LEDGER,2026-09-15T19:12:01.137796+00:00,35011816348.0,1.0,6789ff8539cd3bea806381f1b8d105f11d9e0414

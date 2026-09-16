@@ -1,12 +1,12 @@
 {
   "script_version": "GAS_PART9_V2_ELIGIBLE_COHORT",
-  "run_utc": "2026-09-15T19:12:02.273960+00:00",
+  "run_utc": "2026-09-16T19:52:08.484188+00:00",
   "n_realized": 0,
   "health_status": "INSUFFICIENT_DATA",
   "message": "No realized rows in prediction log yet.",
   "cohort_contract": "prospective_exact_target_only",
   "min_required": 52,
-  "pipeline_run_id": "35011816348",
+  "pipeline_run_id": "35143054946",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "6789ff8539cd3bea806381f1b8d105f11d9e0414"
+  "source_code_sha": "82a648ae21a5241b25ab844c8282b16f1e8ad26b"
 }
