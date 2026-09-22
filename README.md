@@ -15,12 +15,12 @@ The pipeline runs in order:
 gas_part0    FRED + yfinance weekly history (gas prices, WTI, RBOB, macro)
 gas_part0c   EIA Open Data API (gasoline stocks, demand, refinery utilization)
 gas_part6    descriptive HMM/GMM regimes (not predictive validation features)
-gas_part1    causal feature engineering (lags, momentum, crack spread, seasonality)
+gas_part1    point-in-time feature engineering (lags, momentum, spreads, seasonality)
 gas_part2    sklearn ensemble - the primary forecaster
 gas_part2b   XGBoost sleeve (optional)
 gas_part2a   LSTM sleeve (optional, needs torch)
 gas_part3    fuses the sleeves and writes prediction_log.csv
-gas_part9    live performance stats (MAE, MAPE, Diebold-Mariano vs naive, drift)
+gas_part9    live stats (MAE, MAPE, HAC/HLN Diebold-Mariano vs persistence, drift)
 ```
 
 The most recent week has no realized target yet, so Part 1 flags it as the
@@ -29,11 +29,18 @@ actual forecast, targeting the following Monday's EIA release. The prediction
 log is keyed by target date. A target can be appended once; re-runs cannot
 revise its forecast or provenance.
 
-The core ensemble is validated with sequential expanding-window forecasts and
-must beat same-date persistence in RMSE, a one-sided paired test, and at least
-75% of validation folds. Until that gate passes, the published forecast is
-fail-closed to persistence. Optional XGBoost and LSTM sleeves cannot activate
-unless the core gate has already passed; missing evidence fails closed.
+The core ensemble is validated with expanding-origin blocked forecasts and
+must beat same-date persistence in RMSE, a one-sided HAC/HLN-corrected paired
+loss test, and at least 75% of validation folds. Until that gate passes, the
+published forecast is fail-closed to persistence. Optional XGBoost and LSTM
+sleeves cannot activate unless the core gate has already passed; missing
+evidence fails closed.
+
+Regular FRED monthly and quarterly macro histories are current-vintage series:
+their period labels predate publication and past values can be revised. They
+remain available for diagnostics but are excluded from predictive features
+until point-in-time vintages are supplied. Full-history HMM states are also
+diagnostic-only.
 
 A prediction only counts once it's in `prediction_log.csv` before the answer
 is known. Wednesday's backfill fills in the realized price and error metrics;
@@ -73,7 +80,7 @@ Three workflows:
   retains the full research bundle for 90 days as a workflow artifact.
 - `weekly-backfill.yml` — Wednesdays at 1:00 PM ET. Fills only exact target
   observations and re-runs the eligible live cohort.
-- `pages.yml` — deploys the dashboard from the committed data.
+- `pages.yml` — verifies and deploys only the content-hashed committed data.
 
 The workflows use GitHub's schedule timezone field directly. They do not use
 delay-sensitive wall-clock gates, so scheduler delay cannot turn a failed
@@ -92,7 +99,12 @@ content-hashed in `data/release_manifest.json`. The main files are:
 - `artifacts_part3/prediction_log.csv` — the record that matters
 - `artifacts_part9/live_attribution_report.json` — health, DM test, drift
 - `data/release_manifest.json` — hashes, run identity, source date, and target
-- `data/gas_oof_predictions.csv` — sequential rolling-origin validation tape
+- `data/gas_oof_predictions.csv` — expanding-origin blocked validation tape
+
+The dashboard's release-path graphic shows the observed source week, learned
+candidate, governed publication, and next-week target directly from committed
+telemetry. Its forecast chart defaults to `oos_val=1`; full fitted history is
+available only as an explicitly labeled diagnostic view.
 
 Health thresholds Part 9 watches: MAPE over 3% is a warning, over 6% is a
 stop signal; direction accuracy under 50% is a warning; recent-vs-historical

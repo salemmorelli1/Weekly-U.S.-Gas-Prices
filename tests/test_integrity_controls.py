@@ -1,4 +1,3 @@
-import json
 
 import numpy as np
 import pandas as pd
@@ -230,4 +229,26 @@ def test_release_manifest_detects_tamper(tmp_path):
     release.verify_manifest(tmp_path)
     evidence.write_text('{"ok": false}\n', encoding="utf-8")
     with pytest.raises(ValueError, match="manifest"):
+        release.verify_manifest(tmp_path)
+
+
+def test_release_manifest_rejects_unlisted_publication_file(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    evidence = data / "evidence.json"
+    strict_json_dump({"ok": True}, evidence)
+    strict_json_dump(
+        {
+            "schema_version": release.SCHEMA,
+            "files": {
+                evidence.name: {
+                    "sha256": sha256_file(evidence),
+                    "size_bytes": evidence.stat().st_size,
+                }
+            },
+        },
+        data / "release_manifest.json",
+    )
+    strict_json_dump({"unreviewed": True}, data / "unlisted.json")
+    with pytest.raises(ValueError, match="unlisted"):
         release.verify_manifest(tmp_path)

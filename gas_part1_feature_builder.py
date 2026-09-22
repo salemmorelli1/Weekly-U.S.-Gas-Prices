@@ -64,17 +64,16 @@ import json, os, warnings
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
 from gas_time_contract import pipeline_identity, sha256_file, strict_json_dump
-from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("ignore")
 
-SCRIPT_VERSION = "GAS_PART1_V2_CAUSAL_FEATURES"
+SCRIPT_VERSION = "GAS_PART1_V3_POINT_IN_TIME_FEATURES"
 
 
 @dataclass(frozen=True)
@@ -238,7 +237,14 @@ def add_crack_spread_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_macro_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Macro signal features."""
+    """Add lagged market telemetry that is observable at forecast time.
+
+    Monthly CPI, unemployment, and quarterly GDP histories from the regular
+    FRED endpoint are current-vintage series: their period labels predate
+    publication and historical values may be revised. They remain in the
+    master data for diagnostics but are deliberately excluded from the
+    predictive matrix until point-in-time vintages are supplied.
+    """
     if "treasury_10y" in df.columns:
         df["treasury_chg_4w"] = df["treasury_10y"].diff(4).shift(1)
         df["treasury_level"]  = df["treasury_10y"].shift(1)
@@ -257,10 +263,6 @@ def add_macro_features(df: pd.DataFrame) -> pd.DataFrame:
 
     if "energy_xle" in df.columns:
         df["xle_ret_4w"] = df["energy_xle"].pct_change(4).shift(1)
-
-    # CPI energy inflation signal
-    if "cpi_energy" in df.columns:
-        df["cpi_energy_chg_4w"] = df["cpi_energy"].pct_change(4).shift(1)
 
     return df
 
@@ -510,6 +512,7 @@ def write_part1_summary(
         "high_nan_features": high_nan,
         "horizon_weeks": cfg.horizon_weeks,
         "predictive_regime_features_enabled": False,
+        "non_vintage_macro_features_enabled": False,
         "feature_matrix_sha256": (
             sha256_file(matrix_path)
             if matrix_path is not None and matrix_path.exists()
