@@ -77,13 +77,13 @@ from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
-from scipy import stats
 
+from gas_forecast_statistics import TEST_METHOD, compare_squared_errors
 from gas_time_contract import pipeline_identity, sha256_file, strict_json_dump
 
 warnings.filterwarnings("ignore")
 
-SCRIPT_VERSION = "GAS_PART2_V2_CAUSAL_ROLLING_ORIGIN"
+SCRIPT_VERSION = "GAS_PART2_V3_HAC_BLOCKED_OOF"
 
 
 @dataclass(frozen=True)
@@ -92,6 +92,7 @@ class Part2Config:
     part1_dir_name: str = "artifacts_part1"
     out_dir_name: str = "artifacts_part2"
     seed: int = 42
+    horizon_weeks: int = 1
 
     # Validation settings — the last `val_weeks` labeled rows form the
     # COMMON GATE WINDOW shared by Part 2 / 2b / 2a (see walk_forward_train).
@@ -288,7 +289,7 @@ def walk_forward_train(
     y: pd.Series,
     cfg: Part2Config,
 ) -> Tuple[Dict[str, object], Dict[str, float], Dict[str, float], pd.DataFrame, int]:
-    """Run sequential expanding-window validation, then refit on all labels.
+    """Run expanding-origin blocked validation, then refit on all labels.
 
     Each fold's ensemble weights are derived only from earlier validation
     folds. The scored row therefore cannot influence its own model or weight.
@@ -392,15 +393,13 @@ def walk_forward_train(
     for metric_name, value in persistence_metrics.items():
         metrics[f"persistence_{metric_name}"] = float(value)
 
-    mask = np.isfinite(actual) & np.isfinite(ensemble_oof) & np.isfinite(persistence)
-    gains = (actual[mask] - persistence[mask]) ** 2 - (
-        actual[mask] - ensemble_oof[mask]
-    ) ** 2
-    if len(gains) >= 8 and not np.allclose(gains, gains[0]):
-        test = stats.ttest_1samp(gains, popmean=0.0, alternative="greater")
-        p_value = float(test.pvalue)
-    else:
-        p_value = np.nan
+    paired_test = compare_squared_errors(
+        actual,
+        ensemble_oof,
+        persistence,
+        horizon=cfg.horizon_weeks,
+    )
+    p_value = float(paired_test["p_value"])
 
     positive_folds = 0
     for fold_number in sorted(set(fold_ids)):
@@ -422,6 +421,15 @@ def walk_forward_train(
     metrics.update(
         {
             "paired_p_value": p_value,
+            "paired_test_statistic": float(paired_test["statistic"]),
+            "paired_mean_loss_advantage": float(
+                paired_test["mean_loss_advantage"]
+            ),
+            "paired_hac_lags": float(
+                paired_test["hac_lags"]
+                if paired_test["hac_lags"] is not None
+                else np.nan
+            ),
             "positive_folds": float(positive_folds),
             "required_positive_folds": float(required_positive),
             "operator_validated": float(operator_validated),
@@ -534,8 +542,8 @@ def build_forecast_tape(
     FIX (Audit 2026-08):
       - Live rows are included with actual=NaN and in_sample=0.
       - in_sample flags rows predicted by the final refit. The validation
-        window is then replaced with its genuine rolling-origin predictions,
-        so rows marked oos_val=1 are honest out-of-sample values.
+        window is then replaced with its genuine expanding-origin blocked
+        predictions, so rows marked oos_val=1 are honest out-of-sample values.
       - Ensemble fusion previously used fillna(0), which dragged the fused
         value toward zero wherever a model failed. Now weights renormalize
         per row over finite predictions only.
@@ -635,6 +643,16 @@ def write_part2_summary(
             "ensemble_rmse": val_metrics.get("ensemble_rmse"),
             "persistence_rmse": val_metrics.get("persistence_rmse"),
             "paired_p_value": val_metrics.get("paired_p_value"),
+            "paired_test_method": TEST_METHOD,
+            "paired_test_statistic": val_metrics.get("paired_test_statistic"),
+            "paired_mean_loss_advantage": val_metrics.get(
+                "paired_mean_loss_advantage"
+            ),
+            "paired_hac_lags": (
+                int(val_metrics["paired_hac_lags"])
+                if np.isfinite(val_metrics.get("paired_hac_lags", np.nan))
+                else None
+            ),
             "positive_folds": int(val_metrics.get("positive_folds", 0)),
             "required_positive_folds": int(
                 val_metrics.get("required_positive_folds", 0)
@@ -646,10 +664,14 @@ def write_part2_summary(
         **pipeline_identity(),
         "config": {
             "val_weeks": cfg.val_weeks,
+            "horizon_weeks": cfg.horizon_weeks,
             "min_train_weeks": cfg.min_train_weeks,
             "ensemble_weighting": cfg.ensemble_weighting,
-            "gate_window": "sequential_expanding_rolling_origin",
-            "operator_gate": "rmse<persistence, paired p<0.10, >=75% positive folds",
+            "gate_window": "expanding_origin_blocked_oof",
+            "operator_gate": (
+                "rmse<persistence, one-sided DM-HLN-HAC p<0.10, "
+                ">=75% positive folds"
+            ),
         },
     }
     path = out_dir / "gas_part2_summary.json"

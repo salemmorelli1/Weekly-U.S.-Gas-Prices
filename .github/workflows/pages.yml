@@ -36,10 +36,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Set up Pages
-        uses: actions/configure-pages@v6
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d
         with:
           enablement: true
 
@@ -49,14 +49,33 @@ jobs:
           set -euo pipefail
           mkdir -p _site
 
-          if [ -f data/release_manifest.json ]; then
-            python - <<'PY'
+          if [ ! -f data/release_manifest.json ]; then
+            echo "ERROR: data/release_manifest.json is required."
+            exit 1
+          fi
+
+          python - <<'PY'
           import hashlib
           import json
           from pathlib import Path
 
           manifest = json.loads(Path("data/release_manifest.json").read_text())
-          for filename, record in manifest.get("files", {}).items():
+          records = manifest.get("files", {})
+          if not records:
+              raise ValueError("release manifest has no files")
+          listed = set(records)
+          present = {
+              path.name
+              for path in Path("data").iterdir()
+              if path.is_file() and path.name != "release_manifest.json"
+          }
+          if listed != present:
+              raise ValueError(
+                  "release manifest file set mismatch: "
+                  f"missing={sorted(listed - present)}, "
+                  f"unlisted={sorted(present - listed)}"
+              )
+          for filename, record in records.items():
               path = Path("data") / filename
               if not path.is_file():
                   raise FileNotFoundError(path)
@@ -65,7 +84,6 @@ jobs:
                   raise ValueError(f"release manifest mismatch: {path}")
           print("Release manifest verified before Pages publication.")
           PY
-          fi
 
           if [ ! -f index.html ]; then
             echo "ERROR: index.html was not found at the repository root."
@@ -82,35 +100,10 @@ jobs:
             cp -r report _site/report
           fi
 
-          # Copy dashboard telemetry both under data/ and flat at the site root
-          # so older and newer index builds resolve the same committed files.
-          if [ -d data ]; then
-            cp -r data _site/data
-            cp data/* _site/ 2>/dev/null || true
-          fi
-
-          for f in \
-            artifacts_part2/gas_part2_summary.json \
-            artifacts_part2/gas_forecast_tape.csv \
-            artifacts_part2b/gas_part2b_summary.json \
-            artifacts_part2a/gas_part2a_summary.json \
-            artifacts_part3/gas_part3_summary.json \
-            artifacts_part3/prediction_log.csv \
-            artifacts_part6/gas_regime_meta.json \
-            artifacts_part9/live_attribution_report.json
-          do
-            if [ -f "$f" ] && [ ! -f "_site/$(basename "$f")" ]; then
-              cp "$f" _site/
-              echo "Staged from artifacts: $f"
-            fi
-          done
-
-          # The interactive Actual-vs.-Predicted explorer reads the complete
-          # weekly tape from data/ while retaining the flat-path fallback.
-          if [ -f artifacts_part2/gas_forecast_tape.csv ]; then
-            mkdir -p _site/data
-            cp artifacts_part2/gas_forecast_tape.csv _site/data/gas_forecast_tape.csv
-          fi
+          # Pages consumes only the content-hashed release surface. Never
+          # overwrite it with an unmanifested artifact-directory fallback.
+          cp -r data _site/data
+          cp data/* _site/
 
           if [ -f favicon.ico ]; then
             cp favicon.ico _site/favicon.ico
@@ -120,7 +113,7 @@ jobs:
           find _site -maxdepth 4 -type f | sort
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9
         with:
           path: _site
 
@@ -135,4 +128,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346

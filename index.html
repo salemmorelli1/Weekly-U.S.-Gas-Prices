@@ -80,24 +80,28 @@
     .hero-actions { display: flex; gap: 10px; flex-wrap: wrap; }
     .hero-visual {
       position: relative; min-height: 430px; border: 1px solid var(--line); border-radius: 28px;
-      background: radial-gradient(circle at 50% 45%, rgba(82, 214, 232, .12), transparent 42%), rgba(5, 11, 18, .62);
+      background: radial-gradient(circle at 78% 18%, rgba(82, 214, 232, .12), transparent 34%), linear-gradient(145deg, rgba(8, 20, 31, .94), rgba(3, 8, 14, .94));
       box-shadow: var(--shadow); overflow: hidden;
     }
-    .price-orbit { position: absolute; inset: 0; width: 100%; height: 100%; }
-    .pump {
-      position: absolute; left: 50%; top: 47%; width: 150px; height: 202px; transform: translate(-50%, -50%);
-      border-radius: 22px 22px 12px 12px; background: linear-gradient(145deg, #17283b, #08101a 70%);
-      border: 1px solid rgba(204, 229, 242, .28); box-shadow: 0 0 0 12px rgba(82,214,232,.04), 0 30px 55px rgba(0,0,0,.55);
-    }
-    .pump::before { content: ""; position: absolute; left: 24px; top: 24px; width: 100px; height: 70px; border-radius: 10px; background: #02070b; border: 1px solid rgba(82,214,232,.35); box-shadow: inset 0 0 24px rgba(82,214,232,.08); }
-    .pump::after { content: "$3.776"; position: absolute; left: 29px; top: 45px; color: var(--amber); font: 800 1.35rem var(--mono); text-shadow: 0 0 16px rgba(255,189,74,.45); }
-    .pump-base { position: absolute; left: 50%; top: calc(47% + 107px); width: 205px; height: 20px; transform: translateX(-50%); background: #0c1724; border: 1px solid var(--line-strong); border-radius: 7px; }
-    .hose { position: absolute; left: calc(50% + 64px); top: 41%; width: 106px; height: 156px; border: 9px solid #27394a; border-left-color: transparent; border-radius: 0 72px 72px 0; transform: rotate(-8deg); }
-    .nozzle { position: absolute; right: 18%; top: 61%; width: 70px; height: 22px; border-radius: 8px 18px 4px 8px; background: linear-gradient(90deg, #26394c, #0b1722); transform: rotate(21deg); border: 1px solid var(--line-strong); }
-    .orbit-dot { transform-origin: 260px 215px; animation: orbit 12s linear infinite; }
-    .orbit-dot:nth-child(2) { animation-duration: 16s; animation-delay: -4s; }
-    .orbit-dot:nth-child(3) { animation-duration: 20s; animation-delay: -9s; }
-    @keyframes orbit { to { transform: rotate(360deg); } }
+    .forecast-route { position: absolute; inset: 24px 24px 92px; display: grid; grid-template-rows: auto 1fr auto; gap: 17px; }
+    .route-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .route-header span:first-child { display: block; color: var(--dim); font: 800 .65rem var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+    .route-header strong { display: block; margin-top: 4px; color: var(--text); font-size: 1rem; }
+    .gate-chip { border: 1px solid rgba(255,189,74,.42); border-radius: 999px; padding: 7px 10px; color: var(--amber); background: rgba(255,189,74,.07); font: 800 .64rem var(--mono); letter-spacing: .05em; }
+    .route-flow { position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; align-items: stretch; }
+    .route-flow::before { content: ""; position: absolute; left: 10%; right: 10%; top: 28px; height: 1px; background: linear-gradient(90deg, var(--cyan), rgba(82,214,232,.24) 48%, var(--amber)); }
+    .route-card { position: relative; z-index: 1; display: flex; flex-direction: column; min-width: 0; padding: 45px 13px 13px; border: 1px solid var(--line); border-radius: 16px; background: rgba(3, 9, 15, .88); }
+    .route-card::before { content: attr(data-step); position: absolute; top: 18px; left: 50%; width: 20px; height: 20px; transform: translate(-50%, -50%); display: grid; place-items: center; border: 3px solid #07111b; border-radius: 50%; background: var(--cyan); color: #061018; font: 900 .6rem var(--mono); box-shadow: 0 0 18px rgba(82,214,232,.35); }
+    .route-card.candidate::before { background: var(--violet); box-shadow: 0 0 18px rgba(169,140,255,.35); }
+    .route-card.published { border-color: rgba(255,189,74,.42); box-shadow: inset 0 0 28px rgba(255,189,74,.04); }
+    .route-card.published::before { background: var(--amber); box-shadow: 0 0 18px rgba(255,189,74,.38); }
+    .route-label { color: var(--dim); font: 800 .59rem var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+    .route-value { margin: 8px 0 3px; color: var(--text); font: 850 clamp(1.18rem, 2.4vw, 1.55rem) var(--mono); }
+    .route-card.published .route-value { color: var(--amber); }
+    .route-date { color: var(--muted); font: 700 .64rem var(--mono); }
+    .route-note { margin-top: auto; padding-top: 9px; color: var(--dim); font-size: .64rem; line-height: 1.35; }
+    .gate-band { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 12px; border-top: 1px solid var(--line); padding-top: 14px; color: var(--muted); font-size: .7rem; line-height: 1.4; }
+    .gate-band strong { color: var(--amber); font: 800 .68rem var(--mono); }
     .visual-caption { position: absolute; left: 20px; bottom: 18px; max-width: 290px; border-left: 2px solid var(--amber); padding-left: 12px; color: var(--muted); font: .75rem/1.55 var(--mono); }
     .visual-caption strong { display: block; color: var(--text); font-size: .84rem; }
     .tabs {
@@ -234,7 +238,14 @@
       .brand span:last-child { display: none; }
       .top-actions .btn { min-height: 38px; padding-inline: 12px; font-size: .82rem; }
       h1 { font-size: clamp(3.25rem, 18vw, 5.2rem); }
-      .hero-visual { min-height: 360px; }
+      .hero-visual { min-height: 550px; }
+      .forecast-route { inset: 22px 20px 92px; }
+      .route-flow { grid-template-columns: 1fr; }
+      .route-flow::before { left: 22px; right: auto; top: 9%; bottom: 9%; width: 1px; height: auto; background: linear-gradient(var(--cyan), rgba(82,214,232,.24) 48%, var(--amber)); }
+      .route-card { padding: 13px 13px 13px 47px; min-height: 94px; }
+      .route-card::before { top: 50%; left: 22px; }
+      .route-value { margin: 5px 0 2px; }
+      .route-note { position: absolute; right: 12px; bottom: 11px; max-width: 44%; text-align: right; }
       .tabs { grid-template-columns: repeat(3, 1fr); position: relative; top: auto; }
       .metric-grid { grid-template-columns: 1fr 1fr; }
       .metric:last-child { grid-column: 1 / -1; }
@@ -245,10 +256,10 @@
     @media (max-width: 460px) {
       .metric-grid { grid-template-columns: 1fr; }
       .metric:last-child { grid-column: auto; }
-      .hero-visual { min-height: 330px; }
-      .pump { transform: translate(-50%, -50%) scale(.82); }
-      .pump-base { transform: translateX(-50%) scale(.82); }
-      .hose, .nozzle { opacity: .7; }
+      .hero-visual { min-height: 590px; }
+      .route-header { align-items: flex-start; }
+      .route-note { position: static; max-width: none; text-align: left; }
+      .gate-band { grid-template-columns: 1fr; gap: 5px; }
       .model-row { grid-template-columns: 90px 1fr 62px; }
       .fit-metrics { grid-template-columns: 1fr 1fr; }
       .fit-field { width: 100%; }
@@ -275,11 +286,11 @@
     <section class="hero" id="top">
       <div>
         <div class="eyebrow">Weekly U.S. retail gasoline · statistical research laboratory</div>
-        <h1>Forecast the <span class="accent">price at the pump.</span></h1>
+        <h1>Forecast next week’s <span class="accent">U.S. gas price.</span></h1>
         <p class="lead">Explore a governed one-week forecasting pipeline that joins EIA fundamentals, FRED price history, market telemetry, hidden regimes, and gated machine-learning sleeves—then tests every claim against persistence.</p>
         <div class="pill-row">
-          <span class="pill">1,389 weekly observations</span>
-          <span class="pill">102 engineered predictors</span>
+          <span class="pill">2000–present weekly history</span>
+          <span class="pill">Point-in-time feature policy</span>
           <span class="pill amber">Same-window benchmark audit</span>
         </div>
         <div class="hero-actions">
@@ -287,18 +298,35 @@
           <button class="btn" type="button" id="openFitChart">Actual vs. predicted</button>
         </div>
       </div>
-      <div class="hero-visual" aria-label="Animated gasoline pump and orbiting market signals">
-        <svg class="price-orbit" viewBox="0 0 520 430" role="img" aria-labelledby="orbitTitle orbitDesc">
-          <title id="orbitTitle">Market signals orbit the gasoline pump</title>
-          <desc id="orbitDesc">Crude oil, gasoline futures, stocks, and demand signals circle an illustrative retail pump.</desc>
-          <ellipse cx="260" cy="215" rx="205" ry="120" fill="none" stroke="rgba(82,214,232,.16)" stroke-width="1" stroke-dasharray="5 11"/>
-          <ellipse cx="260" cy="215" rx="165" ry="165" fill="none" stroke="rgba(255,189,74,.12)" stroke-width="1" stroke-dasharray="2 13"/>
-          <g class="orbit-dot"><circle cx="465" cy="215" r="7" fill="#52d6e8"/><text x="445" y="197" fill="#a8bbc8" font-size="11">WTI</text></g>
-          <g class="orbit-dot"><circle cx="95" cy="215" r="6" fill="#ffbd4a"/><text x="72" y="195" fill="#a8bbc8" font-size="11">RBOB</text></g>
-          <g class="orbit-dot"><circle cx="260" cy="50" r="5" fill="#a98cff"/><text x="273" y="54" fill="#a8bbc8" font-size="11">stocks</text></g>
-        </svg>
-        <div class="pump" aria-hidden="true"></div><div class="pump-base" aria-hidden="true"></div><div class="hose" aria-hidden="true"></div><div class="nozzle" aria-hidden="true"></div>
-        <div class="visual-caption"><strong id="heroForecast">$3.776 forecast</strong><span id="heroTarget">Target week: August 17, 2026</span><br>Committed model telemetry; browser controls never overwrite it.</div>
+      <div class="hero-visual" aria-label="Governed one-week gasoline forecast release path">
+        <div class="forecast-route" role="group" aria-labelledby="routeTitle">
+          <div class="route-header">
+            <div><span>Forecast release contract</span><strong id="routeTitle">Observed Monday → next Monday target</strong></div>
+            <span class="gate-chip" id="heroGate">CANDIDATE NOT VALIDATED</span>
+          </div>
+          <div class="route-flow">
+            <article class="route-card" data-step="1">
+              <span class="route-label">Source observation</span>
+              <strong class="route-value" id="heroObserved">$4.168</strong>
+              <span class="route-date" id="heroSource">Week 2026-09-14</span>
+              <span class="route-note">EIA U.S. regular retail average known at decision time</span>
+            </article>
+            <article class="route-card candidate" data-step="2">
+              <span class="route-label">Learned candidate</span>
+              <strong class="route-value" id="heroCandidate">$4.053</strong>
+              <span class="route-date">Blocked out-of-sample gate</span>
+              <span class="route-note">Must beat same-date persistence before promotion</span>
+            </article>
+            <article class="route-card published" data-step="3">
+              <span class="route-label">Published forecast</span>
+              <strong class="route-value" id="heroForecast">$4.168</strong>
+              <span class="route-date" id="heroTarget">Target 2026-09-21</span>
+              <span class="route-note">Immutable target-keyed release; no browser override</span>
+            </article>
+          </div>
+          <div class="gate-band"><strong id="heroPublicationMode">FAIL-CLOSED · PERSISTENCE</strong><span>The learned model remains advisory because its validation evidence does not clear the benchmark gate.</span></div>
+        </div>
+        <div class="visual-caption"><strong>Governed national forecast</strong><span id="heroDecision">Decision 2026-09-15</span><br>Every displayed value comes from the committed release ledger.</div>
       </div>
     </section>
 
@@ -312,21 +340,21 @@
     </nav>
 
     <section class="panel active" id="overview" role="tabpanel" aria-labelledby="tab-overview">
-      <div class="status-strip"><span id="snapshotDate">Committed artifact snapshot · August 19, 2026</span><span class="status" id="dataStatus">Embedded baseline</span></div>
+      <div class="status-strip"><span id="snapshotDate">Committed forecast decision · 2026-09-15</span><span class="status" id="dataStatus">FAIL_CLOSED_PERSISTENCE · not validated</span></div>
       <div class="metric-grid">
-        <article class="metric"><div class="metric-label">Latest observed</div><div class="metric-value" id="latestObserved">$3.864</div><div class="metric-note">Week of Aug. 10, 2026</div></article>
-        <article class="metric"><div class="metric-label">Next-week forecast</div><div class="metric-value" id="ensembleForecast">$3.776</div><div class="metric-note" id="forecastWeek">Target: Aug. 17, 2026</div></article>
-        <article class="metric"><div class="metric-label">Validation RMSE</div><div class="metric-value" id="ensembleRmse">$0.186</div><div class="metric-note">Core ensemble · 52 weeks</div></article>
-        <article class="metric"><div class="metric-label">Persistence RMSE</div><div class="metric-value" id="persistenceRmse">$0.112</div><div class="metric-note">Recomputed on same dates</div></article>
+        <article class="metric"><div class="metric-label">Latest observed</div><div class="metric-value" id="latestObserved">$4.168</div><div class="metric-note" id="latestObservedWeek">Source: 2026-09-14</div></article>
+        <article class="metric"><div class="metric-label">Next-week forecast</div><div class="metric-value" id="ensembleForecast">$4.168</div><div class="metric-note" id="forecastWeek">Target: 2026-09-21</div></article>
+        <article class="metric"><div class="metric-label">Validation RMSE</div><div class="metric-value" id="ensembleRmse">$0.137</div><div class="metric-note">Core ensemble · 52 OOS weeks</div></article>
+        <article class="metric"><div class="metric-label">Persistence RMSE</div><div class="metric-value" id="persistenceRmse">$0.115</div><div class="metric-note">Recomputed on same dates</div></article>
         <article class="metric"><div class="metric-label">Live evidence</div><div class="metric-value" id="liveCount">0</div><div class="metric-note">Eligible prospective cases</div></article>
       </div>
       <article class="card fit-card" id="fitExplorer">
         <div class="fit-header">
           <div>
-            <div class="card-kicker">All 1,389 weekly rows · January 2000–August 2026</div>
-            <h2>Actual price versus model path.</h2>
+            <div class="card-kicker">Out-of-sample evidence by default · fitted history is diagnostic</div>
+            <h2>Actual price versus forecast path.</h2>
           </div>
-          <p class="copy">Move across the chart to inspect any week. Change the model or shorten the time window to see where the fitted path follows the observed retail price—and where it misses.</p>
+          <p class="copy">The default view contains only blocked out-of-sample validation rows. You may inspect the full fitted history, but those in-sample values are labeled diagnostic and never count as validation evidence.</p>
         </div>
         <div class="fit-toolbar" aria-label="Actual versus predicted chart controls">
           <label class="fit-field" for="fitModel">Prediction series
@@ -337,6 +365,12 @@
               <option value="pred_gbm">Gradient boosting</option>
               <option value="pred_rf">Random forest</option>
               <option value="pred_elasticnet">Elastic net</option>
+            </select>
+          </label>
+          <label class="fit-field" for="fitScope">Evidence scope
+            <select id="fitScope">
+              <option value="validation">Out-of-sample validation</option>
+              <option value="diagnostic">Full fitted history (diagnostic)</option>
             </select>
           </label>
           <div class="fit-field"><span>Visible history</span><div class="range-buttons" id="fitRanges">
@@ -362,7 +396,7 @@
         <div class="fit-chart-wrap" id="fitChartWrap">
           <svg id="fitChart" class="fit-chart" viewBox="0 0 1120 430" role="img" aria-labelledby="fitTitle fitDesc">
             <title id="fitTitle">Weekly actual and predicted gasoline prices</title>
-            <desc id="fitDesc">All available weekly actual gasoline prices and fitted core-ensemble values from January 2000 through August 2026. Move across the chart to inspect individual weeks.</desc>
+            <desc id="fitDesc">Blocked out-of-sample weekly actual gasoline prices and core-ensemble forecasts. Move across the chart to inspect individual weeks.</desc>
           </svg>
           <div class="fit-tooltip" id="fitTooltip" hidden></div>
         </div>
@@ -406,12 +440,12 @@
           <div class="card-kicker">Explanatory scenario</div>
           <h2 id="scenarioHeadline">Balanced pressure.</h2>
           <div class="scenario-output">
-            <div><div class="metric-label">Illustrative level</div><div class="scenario-value" id="scenarioPrice">$3.864</div><div class="scenario-direction" id="scenarioDirection">No directional displacement</div></div>
+            <div><div class="metric-label">Illustrative level</div><div class="scenario-value" id="scenarioPrice">$4.168</div><div class="scenario-direction" id="scenarioDirection">No directional displacement</div></div>
             <div><div class="metric-label">Pressure score</div><div class="scenario-value" id="pressureScore">0.00</div><div class="scenario-direction">Scaled browser index</div></div>
           </div>
           <div class="gauge" aria-label="Scenario pressure from downward to upward"><span class="gauge-marker" id="gaugeMarker"></span></div>
           <div class="notice" style="margin-top:20px"><strong>Scientific boundary.</strong> These coefficients are transparent teaching weights chosen for direction and scale. They are not learned parameters, uncertainty intervals, or investment guidance.</div>
-          <h3 style="margin-top:24px">Committed model forecast remains <span id="lockedForecast">$3.776</span></h3>
+          <h3 style="margin-top:24px">Committed governed forecast remains <span id="lockedForecast">$4.168</span></h3>
           <div class="model-list" id="modelForecasts"></div>
         </article>
       </div>
@@ -424,9 +458,9 @@
           <div class="model-list" id="rmseBars"></div>
         </article>
         <article class="card">
-          <div class="card-kicker">Interpretation</div><h2>The ensemble error was 1.67× persistence.</h2>
-          <p class="copy">Ridge was the best learned component, but no reported learner beat the same-window last-value forecast. XGBoost was correctly rejected, and the LSTM sleeve was not evaluated because its upstream gate failed.</p>
-          <div class="notice"><strong>Important artifact rule.</strong> Rows labeled <code>oos_val=1</code> now contain sequential rolling-origin predictions. Earlier rows remain post-refit diagnostics and are not validation evidence.</div>
+          <div class="card-kicker">Interpretation</div><h2>The ensemble error was 1.19× persistence.</h2>
+          <p class="copy">Ridge had a narrowly lower point RMSE, but the deployed ensemble was worse than same-date persistence and cleared none of the four positive-fold checks. XGBoost was rejected, and the LSTM sleeve was not evaluated because its upstream gate failed.</p>
+          <div class="notice"><strong>Important artifact rule.</strong> Rows labeled <code>oos_val=1</code> contain expanding-origin blocked forecasts. Earlier rows remain post-refit diagnostics and are not validation evidence.</div>
         </article>
       </div>
       <article class="card" style="margin-top:14px">
@@ -439,20 +473,22 @@
       <article class="card">
         <div class="card-kicker">Four-component Gaussian HMM</div><h2>Latent states organize volatility—not causes.</h2>
         <div class="regime-layout">
-          <svg class="donut" viewBox="0 0 120 120" role="img" aria-labelledby="donutTitle donutDesc">
-            <title id="donutTitle">Regime occupancy</title><desc id="donutDesc">Most weeks are NORMAL, followed by SUPPLY_SHOCK, NORMAL_1, and a singleton NORMAL_3 state.</desc>
+          <svg class="donut" id="regimeDonut" viewBox="0 0 120 120" role="img" aria-labelledby="donutTitle donutDesc">
+            <title id="donutTitle">Regime occupancy</title><desc id="donutDesc">Committed descriptive-state occupancy from the latest regime artifact.</desc>
             <circle cx="60" cy="60" r="44" stroke="rgba(255,255,255,.07)"/>
-            <circle cx="60" cy="60" r="44" stroke="#52d6e8" stroke-dasharray="214.2 276.5" stroke-dashoffset="0"/>
-            <circle cx="60" cy="60" r="44" stroke="#ef8f3a" stroke-dasharray="49.5 276.5" stroke-dashoffset="-214.2"/>
-            <circle cx="60" cy="60" r="44" stroke="#a98cff" stroke-dasharray="12.4 276.5" stroke-dashoffset="-263.7"/>
-            <circle cx="60" cy="60" r="44" stroke="#ffbd4a" stroke-dasharray=".2 276.5" stroke-dashoffset="-276.1"/>
+            <circle class="regime-segment" cx="60" cy="60" r="44" stroke="#52d6e8" stroke-dasharray="117.6 276.5" stroke-dashoffset="0"/>
+            <circle class="regime-segment" cx="60" cy="60" r="44" stroke="#ef8f3a" stroke-dasharray="93.8 276.5" stroke-dashoffset="-117.6"/>
+            <circle class="regime-segment" cx="60" cy="60" r="44" stroke="#a98cff" stroke-dasharray="55.3 276.5" stroke-dashoffset="-211.4"/>
+            <circle class="regime-segment" cx="60" cy="60" r="44" stroke="#ffbd4a" stroke-dasharray="9.3 276.5" stroke-dashoffset="-266.7"/>
+            <circle class="regime-segment" cx="60" cy="60" r="44" stroke="#48d4ad" stroke-dasharray=".4 276.5" stroke-dashoffset="-276.1"/>
           </svg>
-          <div><div class="regime-list">
-            <div class="regime-item"><span class="dot"></span><span>NORMAL</span><strong>1,077 · 77.5%</strong></div>
-            <div class="regime-item"><span class="dot orange"></span><span>SUPPLY_SHOCK</span><strong>249 · 17.9%</strong></div>
-            <div class="regime-item"><span class="dot violet"></span><span>NORMAL_1</span><strong>62 · 4.5%</strong></div>
-            <div class="regime-item"><span class="dot amber"></span><span>NORMAL_3</span><strong>1 · 0.1%</strong></div>
-          </div><p class="copy">The latest model-implied state is <strong id="latestRegime">SUPPLY_SHOCK</strong>. A near-one posterior probability is conditional on the fitted HMM; it is not a calibrated probability that an externally verified supply disruption occurred.</p></div>
+          <div><div class="regime-list" id="regimeList">
+            <div class="regime-item"><span class="dot"></span><span>NORMAL__STATE_0</span><strong>593 · 42.5%</strong></div>
+            <div class="regime-item"><span class="dot orange"></span><span>NORMAL__STATE_3</span><strong>473 · 33.9%</strong></div>
+            <div class="regime-item"><span class="dot violet"></span><span>NORMAL__STATE_1</span><strong>279 · 20.0%</strong></div>
+            <div class="regime-item"><span class="dot amber"></span><span>UNKNOWN</span><strong>47 · 3.4%</strong></div>
+            <div class="regime-item"><span class="dot" style="background:var(--teal)"></span><span>NORMAL__STATE_2</span><strong>2 · 0.1%</strong></div>
+          </div><p class="copy">The latest model-implied state is <strong id="latestRegime">NORMAL__STATE_0</strong>. These fitted descriptive states are not causal labels or calibrated probabilities of an externally verified supply event.</p></div>
         </div>
       </article>
     </section>
@@ -461,7 +497,7 @@
       <div class="grid-3">
         <article class="card"><div class="card-kicker">Part 00 / 0c</div><h3>Acquire and align</h3><p class="copy">FRED, EIA, crude, products, macro variables, and market telemetry form one weekly research table.</p></article>
         <article class="card"><div class="card-kicker">Part 06</div><h3>Infer regimes</h3><p class="copy">A four-state Gaussian HMM contributes lagged probabilities and a low-confidence market-state signal.</p></article>
-        <article class="card"><div class="card-kicker">Part 01</div><h3>Build 102 features</h3><p class="copy">Lags, rolling moments, momentum, seasonality, EIA pressure, macro fields, and state probabilities.</p></article>
+        <article class="card"><div class="card-kicker">Part 01</div><h3>Build causal features</h3><p class="copy">Lags, rolling moments, momentum, seasonality, and EIA pressure enter the model. Current-vintage macro releases and full-history regime states stay diagnostic-only.</p></article>
         <article class="card"><div class="card-kicker">Part 02 / 2b / 2a</div><h3>Fit and gate</h3><p class="copy">Five core learners, optional XGBoost, and conditional LSTM evaluation under fail-closed promotion rules.</p></article>
         <article class="card"><div class="card-kicker">Part 03</div><h3>Fuse accepted sleeves</h3><p class="copy">Only models that clear validation enter the canonical forecast. Current core weight: 1.00.</p></article>
         <article class="card"><div class="card-kicker">Part 09</div><h3>Backfill and audit</h3><p class="copy">Matured forecasts enter a live ledger with MAPE, direction, drift, and paired baseline tests.</p></article>
@@ -488,20 +524,23 @@
 
   <script>
     const embedded = {
-      observed: 3.864,
-      forecast: 3.7758,
-      target: "2026-08-17",
-      regime: "SUPPLY_SHOCK",
+      observed: 4.168,
+      forecast: 4.168,
+      candidate: 4.053,
+      target: "2026-09-21",
+      source: "2026-09-14",
+      decision: "2026-09-15",
+      regime: "NORMAL__STATE_0",
       liveN: 0,
-      models: { hgb: 3.7081, rf: 3.7767, gbm: 3.8007, elasticnet: 3.7832, ridge: 3.8050, ensemble: 3.7758 },
+      models: { hgb: 4.0730, rf: 3.9649, gbm: 4.0719, elasticnet: 3.9453, ridge: 4.1359, ensemble: 4.0530 },
       validation: {
-        persistence: { mae: .0686, rmse: .1117, mape: null, r2: null },
-        hgb: { mae: .1477, rmse: .1958, mape: 4.4348, r2: .8738 },
-        rf: { mae: .1891, rmse: .2506, mape: 5.5181, r2: .7931 },
-        gbm: { mae: .1343, rmse: .1903, mape: 4.0081, r2: .8807 },
-        elasticnet: { mae: .1536, rmse: .2229, mape: 4.3082, r2: .8363 },
-        ridge: { mae: .1064, rmse: .1641, mape: 2.9938, r2: .9114 },
-        ensemble: { mae: .1313, rmse: .1864, mape: 3.8195, r2: .8856 }
+        persistence: { mae: .0741, rmse: .1150, mape: 2.0623, r2: .9598 },
+        hgb: { mae: .1025, rmse: .1490, mape: 2.7867, r2: .9326 },
+        rf: { mae: .1446, rmse: .2037, mape: 3.9869, r2: .8739 },
+        gbm: { mae: .0887, rmse: .1453, mape: 2.4347, r2: .9359 },
+        elasticnet: { mae: .1324, rmse: .1899, mape: 3.6234, r2: .8904 },
+        ridge: { mae: .0716, rmse: .1128, mape: 1.9840, r2: .9614 },
+        ensemble: { mae: .0911, rmse: .1370, mape: 2.5096, r2: .9430 }
       }
     };
     const yearly = [[2000,1.462],[2001,1.384],[2002,1.313],[2003,1.516],[2004,1.812],[2005,2.240],[2006,2.533],[2007,2.767],[2008,3.213],[2009,2.314],[2010,2.742],[2011,3.476],[2012,3.552],[2013,3.443],[2014,3.299],[2015,2.334],[2016,2.070],[2017,2.333],[2018,2.631],[2019,2.501],[2020,2.074],[2021,2.908],[2022,3.803],[2023,3.397],[2024,3.191],[2025,2.980],[2026,3.589]];
@@ -525,6 +564,7 @@
 
     function renderHistory() {
       const svg = document.getElementById("historyChart");
+      svg.replaceChildren();
       const ns = "http://www.w3.org/2000/svg";
       const W = 760, H = 350, m = { l: 54, r: 22, t: 24, b: 44 };
       const x = year => m.l + (year - 2000) / 26 * (W - m.l - m.r);
@@ -569,6 +609,44 @@
       }).join("");
     }
 
+    function renderRegimeDistribution(distribution) {
+      const entries = Object.entries(distribution || {})
+        .map(([name, count]) => [name, Number(count)])
+        .filter(([, count]) => Number.isFinite(count) && count > 0)
+        .sort((a, b) => b[1] - a[1]);
+      if (!entries.length) return;
+      const total = entries.reduce((sum, [, count]) => sum + count, 0);
+      const circumference = 2 * Math.PI * 44;
+      const colors = ["#52d6e8", "#ef8f3a", "#a98cff", "#ffbd4a", "#48d4ad"];
+      const svg = document.getElementById("regimeDonut");
+      const ns = "http://www.w3.org/2000/svg";
+      svg.querySelectorAll(".regime-segment").forEach(node => node.remove());
+      let offset = 0;
+      entries.forEach(([, count], index) => {
+        const length = circumference * count / total;
+        const circle = document.createElementNS(ns, "circle");
+        circle.setAttribute("class", "regime-segment");
+        circle.setAttribute("cx", "60"); circle.setAttribute("cy", "60"); circle.setAttribute("r", "44");
+        circle.setAttribute("stroke", colors[index % colors.length]);
+        circle.setAttribute("stroke-dasharray", `${length.toFixed(2)} ${circumference.toFixed(2)}`);
+        circle.setAttribute("stroke-dashoffset", (-offset).toFixed(2));
+        svg.appendChild(circle);
+        offset += length;
+      });
+      document.getElementById("donutDesc").textContent = entries
+        .map(([name, count]) => `${name}: ${count} weeks`)
+        .join("; ");
+      const list = document.getElementById("regimeList");
+      list.replaceChildren();
+      entries.forEach(([name, count], index) => {
+        const item = document.createElement("div"); item.className = "regime-item";
+        const dot = document.createElement("span"); dot.className = "dot"; dot.style.background = colors[index % colors.length];
+        const label = document.createElement("span"); label.textContent = name;
+        const value = document.createElement("strong"); value.textContent = `${count.toLocaleString()} · ${(100 * count / total).toFixed(1)}%`;
+        item.append(dot, label, value); list.appendChild(item);
+      });
+    }
+
     const fitModels = {
       pred_ensemble: "Core ensemble",
       pred_ridge: "Ridge",
@@ -579,6 +657,7 @@
     };
     let fitRows = [];
     let fitRange = "all";
+    let fitScope = "validation";
 
     function parseForecastCsv(text) {
       const lines = text.trim().split(/\r?\n/);
@@ -627,9 +706,20 @@
     function renderFitChart() {
       if (!fitRows.length) return;
       const model = document.getElementById("fitModel").value;
-      const limit = fitRange === "all" ? fitRows.length : Number(fitRange);
-      const startIndex = Math.max(0, fitRows.length - limit);
-      const rows = fitRows.slice(startIndex);
+      const baseRows = fitScope === "validation"
+        ? fitRows.filter(row => row.oos_val === 1)
+        : fitRows;
+      if (!baseRows.length) {
+        document.getElementById("fitN").textContent = "Unavailable";
+        document.getElementById("fitDataStatus").innerHTML = "<strong>No out-of-sample rows were staged.</strong> Validation evidence cannot be displayed.";
+        return;
+      }
+      const limit = fitRange === "all" ? baseRows.length : Number(fitRange);
+      const startIndex = Math.max(0, baseRows.length - limit);
+      const rows = baseRows.slice(startIndex);
+      const scopeLabel = fitScope === "validation"
+        ? "blocked out-of-sample validation"
+        : "full fitted history · diagnostic only";
       const svg = document.getElementById("fitChart");
       const wrap = document.getElementById("fitChartWrap");
       const tooltip = document.getElementById("fitTooltip");
@@ -637,7 +727,7 @@
       const W = 1120, H = 430, m = { l: 58, r: 24, t: 28, b: 48 };
       const persistence = rows.map((row, index) => {
         if (Number.isFinite(row.pred_persistence)) return row.pred_persistence;
-        const source = fitRows[startIndex + index - 1];
+        const source = baseRows[startIndex + index - 1];
         return source && Number.isFinite(source.actual) ? source.actual : null;
       });
       const values = [];
@@ -654,9 +744,9 @@
       svg.replaceChildren();
 
       const title = document.createElementNS(ns, "title");
-      title.id = "fitTitle"; title.textContent = "Weekly actual gasoline prices and " + fitModels[model] + " values"; svg.appendChild(title);
+      title.id = "fitTitle"; title.textContent = "Weekly actual gasoline prices and " + fitModels[model] + " values, " + scopeLabel; svg.appendChild(title);
       const desc = document.createElementNS(ns, "desc");
-      desc.id = "fitDesc"; desc.textContent = rows.length + " weekly rows from " + rows[0].week_date + " through " + rows[rows.length - 1].week_date + "."; svg.appendChild(desc);
+      desc.id = "fitDesc"; desc.textContent = rows.length + " " + scopeLabel + " rows from " + rows[0].week_date + " through " + rows[rows.length - 1].week_date + "."; svg.appendChild(desc);
       svg.setAttribute("aria-labelledby", "fitTitle fitDesc");
 
       const ticks = 5;
@@ -726,7 +816,7 @@
       document.getElementById("fitRmse").textContent = money(rmse);
       document.getElementById("fitCorrelation").textContent = corr == null ? "—" : corr.toFixed(3);
       document.getElementById("predictionLegend").textContent = fitModels[model];
-      document.getElementById("fitDataStatus").innerHTML = `<strong>${rows[0].week_date} → ${rows[rows.length - 1].week_date}</strong> · ${pairs.length.toLocaleString()} paired actual/predicted values`;
+      document.getElementById("fitDataStatus").innerHTML = `<strong>${scopeLabel}</strong> · ${rows[0].week_date} → ${rows[rows.length - 1].week_date} · ${pairs.length.toLocaleString()} paired values`;
     }
 
     async function loadForecastHistory() {
@@ -744,6 +834,10 @@
     }
 
     document.getElementById("fitModel").addEventListener("change", renderFitChart);
+    document.getElementById("fitScope").addEventListener("change", event => {
+      fitScope = event.target.value;
+      renderFitChart();
+    });
     document.getElementById("showPersistence").addEventListener("change", renderFitChart);
     document.querySelectorAll("[data-fit-range]").forEach(button => button.addEventListener("click", () => {
       fitRange = button.dataset.fitRange;
@@ -791,6 +885,11 @@
           hgb: Number(p2.latest_predictions.pred_hgb), rf: Number(p2.latest_predictions.pred_rf), gbm: Number(p2.latest_predictions.pred_gbm),
           elasticnet: Number(p2.latest_predictions.pred_elasticnet), ridge: Number(p2.latest_predictions.pred_ridge), ensemble: Number(p2.latest_predictions.pred_ensemble)
         });
+        const candidate = Number(p2.latest_predictions.pred_ensemble);
+        if (Number.isFinite(candidate)) {
+          embedded.candidate = candidate;
+          document.getElementById("heroCandidate").textContent = money(candidate);
+        }
         if (p2.val_metrics && p2.val_metrics.ensemble_rmse) document.getElementById("ensembleRmse").textContent = money(p2.val_metrics.ensemble_rmse);
         if (p2.operator_validation && Number.isFinite(Number(p2.operator_validation.persistence_rmse))) {
           embedded.validation.persistence.rmse = Number(p2.operator_validation.persistence_rmse);
@@ -813,27 +912,46 @@
           embedded.forecast = governed;
           document.getElementById("ensembleForecast").textContent = money(governed);
           document.getElementById("lockedForecast").textContent = money(governed);
-          document.getElementById("heroForecast").textContent = money(governed) + " governed forecast";
+          document.getElementById("heroForecast").textContent = money(governed);
         }
         const observed = Number(p3.latest_prediction.pred_persistence);
         if (Number.isFinite(observed)) {
           embedded.observed = observed;
           document.getElementById("latestObserved").textContent = money(observed);
+          document.getElementById("heroObserved").textContent = money(observed);
+        }
+        const candidate = Number(p3.latest_prediction.pred_candidate);
+        if (Number.isFinite(candidate)) {
+          embedded.candidate = candidate;
+          document.getElementById("heroCandidate").textContent = money(candidate);
+        }
+        if (p3.latest_prediction.anchor_week) {
+          embedded.source = p3.latest_prediction.anchor_week;
+          document.getElementById("heroSource").textContent = "Week " + embedded.source;
+          document.getElementById("latestObservedWeek").textContent = "Source: " + embedded.source;
         }
         if (p3.latest_prediction.target_date) {
           embedded.target = p3.latest_prediction.target_date;
           document.getElementById("forecastWeek").textContent = "Target: " + embedded.target;
-          document.getElementById("heroTarget").textContent = "Target week: " + embedded.target;
+          document.getElementById("heroTarget").textContent = "Target " + embedded.target;
         }
         if (p3.latest_prediction.decision_date) {
+          embedded.decision = p3.latest_prediction.decision_date;
           document.getElementById("snapshotDate").textContent = "Committed forecast decision · " + p3.latest_prediction.decision_date;
+          document.getElementById("heroDecision").textContent = "Decision " + embedded.decision;
         }
+        const validated = Boolean(p3.operator_validated);
+        document.getElementById("heroGate").textContent = validated ? "CANDIDATE VALIDATED" : "CANDIDATE NOT VALIDATED";
+        document.getElementById("heroPublicationMode").textContent = p3.publication_mode || "UNKNOWN_MODE";
       }
       if (p6 && p6.latest_regime) { embedded.regime = p6.latest_regime; document.getElementById("latestRegime").textContent = p6.latest_regime; }
+      if (p6 && p6.regime_distribution) renderRegimeDistribution(p6.regime_distribution);
       if (p9 && Number.isFinite(Number(p9.n_realized))) { embedded.liveN = Number(p9.n_realized); document.getElementById("liveCount").textContent = String(embedded.liveN); }
       document.getElementById("dataStatus").textContent = p3
         ? `${p3.publication_mode || "UNKNOWN_MODE"} · ${p3.operator_validated ? "validated" : "not validated"}`
         : (p2 || p6 || p9 ? "Partial artifact telemetry" : "Embedded audited baseline");
+      renderHistory();
+      updateScenario();
     }
 
     function animateSky() {

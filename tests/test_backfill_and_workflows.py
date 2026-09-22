@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import numpy as np
@@ -119,3 +120,16 @@ def test_ci_workflow_runs_compile_lint_and_tests():
     assert "py_compile" in ci
     assert "ruff check" in ci
     assert "pytest -q" in ci
+
+
+def test_pages_is_pinned_and_manifest_only():
+    root = Path(__file__).resolve().parents[1]
+    pages = (root / ".github/workflows/pages.yml").read_text(encoding="utf-8")
+    action_lines = [line.strip() for line in pages.splitlines() if "uses:" in line]
+
+    assert action_lines
+    assert all(re.search(r"@[0-9a-f]{40}$", line) for line in action_lines)
+    assert "data/release_manifest.json is required" in pages
+    assert "release manifest file set mismatch" in pages
+    assert "Staged from artifacts" not in pages
+    assert "cp artifacts_part2/gas_forecast_tape.csv" not in pages

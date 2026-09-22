@@ -220,8 +220,22 @@ def verify_manifest(root: Path) -> dict[str, Any]:
     files = manifest.get("files")
     if not isinstance(files, dict) or not files:
         raise ValueError("release manifest has no files")
+    data_dir = root / "data"
+    listed = set(files)
+    present = {
+        path.name
+        for path in data_dir.iterdir()
+        if path.is_file() and path.name != manifest_path.name
+    }
+    if listed != present:
+        missing = sorted(listed - present)
+        unlisted = sorted(present - listed)
+        raise ValueError(
+            "release manifest file set mismatch: "
+            f"missing={missing}, unlisted={unlisted}"
+        )
     for filename, record in files.items():
-        path = root / "data" / filename
+        path = data_dir / filename
         if not path.is_file():
             raise FileNotFoundError(f"manifest file missing: data/{filename}")
         if sha256_file(path) != str(record.get("sha256", "")):

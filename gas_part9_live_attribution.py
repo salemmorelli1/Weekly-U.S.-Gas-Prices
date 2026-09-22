@@ -13,7 +13,7 @@ Responsibilities
 1. Consume the canonical prediction_log.csv (live realized rows only)
 2. Compute statistically valid live performance metrics
    (MAE, RMSE, MAPE rolling 4w/8w/all-time)
-3. Diebold-Mariano test: fusion model vs. naive carry benchmark
+3. HAC/HLN-corrected Diebold-Mariano test vs. naive carry benchmark
 4. Concept drift detection: has model accuracy degraded recently?
 5. Model health diagnostics and stopping recommendations
 
@@ -52,21 +52,21 @@ def _colab_init(extra_packages=None):
 
 _colab_init(extra_packages=["scipy", "pyarrow"])
 
-import json, os, warnings
+import os, warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
 
+from gas_forecast_statistics import compare_squared_errors
 from gas_time_contract import pipeline_identity, protocol_eligible_record, strict_json_dump
-from scipy import stats
 
 warnings.filterwarnings("ignore")
 
-SCRIPT_VERSION = "GAS_PART9_V2_ELIGIBLE_COHORT"
+SCRIPT_VERSION = "GAS_PART9_V3_HAC_ELIGIBLE_COHORT"
 
 
 @dataclass(frozen=True)
@@ -79,7 +79,7 @@ class Part9Config:
     min_realized_n: int = 52       # one full prospective year
 
     # Diebold-Mariano test significance threshold
-    dm_t_stat_min: float = 1.64   # ~90% confidence (one-sided)
+    dm_alpha: float = 0.10
 
     # Rolling windows for performance tracking
     rolling_windows: Tuple[int, ...] = (4, 8, 13, 26)
@@ -255,39 +255,33 @@ def diebold_mariano_test(
     y_true: np.ndarray,
     y_model: np.ndarray,
     y_naive: np.ndarray,
-) -> Dict[str, float]:
+    *,
+    alpha: float = 0.10,
+) -> Dict[str, object]:
     """
-    Diebold-Mariano test: is the model significantly better than naive?
+    HAC/HLN-corrected Diebold-Mariano test against persistence.
+
     H0: forecast losses are equal.
     H1: model loss < naive loss (model is better).
-    Returns t-stat, p-value (one-sided), and interpretation.
+    Returns a one-sided p-value and records the long-run-variance bandwidth.
     """
-    mask = np.isfinite(y_true) & np.isfinite(y_model) & np.isfinite(y_naive)
-    if mask.sum() < 8:
-        return {"dm_t_stat": np.nan, "dm_p_value": np.nan, "dm_interpretation": "INSUFFICIENT_DATA"}
-
-    yt, ym, yn = y_true[mask], y_model[mask], y_naive[mask]
-
-    e_model = (yt - ym) ** 2
-    e_naive = (yn - yt) ** 2
-    d = e_naive - e_model   # positive = model better
-
-    t_stat, p_value = stats.ttest_1samp(d, 0.0)
-    # One-sided: p for model better than naive
-    p_one_sided = p_value / 2 if t_stat > 0 else 1.0 - p_value / 2
-
-    interpretation = (
-        "MODEL_SIGNIFICANTLY_BETTER"
-        if t_stat > 1.64 and p_one_sided < 0.10
-        else "NOT_SIGNIFICANT"
-        if t_stat > 0
-        else "MODEL_WORSE_THAN_NAIVE"
+    result = compare_squared_errors(
+        y_true,
+        y_model,
+        y_naive,
+        horizon=1,
+        min_observations=8,
+        alpha=alpha,
     )
-
     return {
-        "dm_t_stat":       round(float(t_stat), 3),
-        "dm_p_value":      round(float(p_one_sided), 4),
-        "dm_interpretation": interpretation,
+        "dm_method": result["test_method"],
+        "dm_n": result["n"],
+        "dm_alpha": result["alpha"],
+        "dm_hac_lags": result["hac_lags"],
+        "dm_mean_loss_advantage": result["mean_loss_advantage"],
+        "dm_t_stat": result["statistic"],
+        "dm_p_value": result["p_value"],
+        "dm_interpretation": result["interpretation"],
     }
 
 
@@ -348,7 +342,7 @@ def detect_concept_drift(
 def assess_model_health(
     metrics: Dict[str, float],
     drift: Dict[str, object],
-    dm_result: Dict[str, float],
+    dm_result: Dict[str, object],
     cfg: Part9Config,
 ) -> Dict[str, object]:
     """
@@ -494,7 +488,7 @@ def main() -> int:
     all_time = compute_all_time_metrics(df)
     def _fmt(v, spec, suffix=""):
         return (format(v, spec) + suffix) if isinstance(v, float) and np.isfinite(v) else "N/A"
-    print(f"\n[Part9] All-time metrics:")
+    print("\n[Part9] All-time metrics:")
     print(f"  MAE:     ${_fmt(all_time['mae'], '.4f')}/gal")
     print(f"  RMSE:    ${_fmt(all_time['rmse'], '.4f')}/gal")
     print(f"  MAPE:    {_fmt(all_time['mape'], '.2f', '%')}")
@@ -502,7 +496,7 @@ def main() -> int:
 
     # Rolling metrics
     rolling = compute_rolling_metrics(df, cfg.rolling_windows)
-    print(f"\n[Part9] Rolling metrics:")
+    print("\n[Part9] Rolling metrics:")
     for window, m in rolling.items():
         n_w = m.get("n", 0)
         if n_w > 0:
@@ -511,7 +505,7 @@ def main() -> int:
 
     # Naive benchmark
     naive = compute_naive_metrics(df)
-    print(f"\n[Part9] Naive carry benchmark:")
+    print("\n[Part9] Naive carry benchmark:")
     print(f"  RMSE: ${_fmt(naive['rmse'], '.4f')}/gal | MAPE: {_fmt(naive['mape'], '.2f', '%')}")
 
     # Diebold-Mariano test
@@ -521,7 +515,12 @@ def main() -> int:
         df.get("pred_persistence", pd.Series(np.nan, index=df.index)),
         errors="coerce",
     ).values
-    dm_result = diebold_mariano_test(y_true, y_pred, y_naive)
+    dm_result = diebold_mariano_test(
+        y_true,
+        y_pred,
+        y_naive,
+        alpha=cfg.dm_alpha,
+    )
     print(f"\n[Part9] Diebold-Mariano test: {dm_result['dm_interpretation']} "
           f"(t={dm_result['dm_t_stat']}, p={dm_result['dm_p_value']})")
 

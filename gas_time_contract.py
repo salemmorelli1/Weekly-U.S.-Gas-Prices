@@ -143,8 +143,11 @@ def strict_json_dump(data: Any, path: str | Path) -> None:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(_json_safe(data), indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
+    # Encode explicitly so Windows newline translation cannot change the
+    # content-addressed publication bytes produced on Linux CI.
+    temporary.write_bytes(
+        (json.dumps(_json_safe(data), indent=2, allow_nan=False) + "\n").encode(
+            "utf-8"
+        )
     )
     temporary.replace(destination)
