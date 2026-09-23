@@ -1,6 +1,6 @@
 {
   "schema_version": "GAS_RELEASE_MANIFEST_V1",
-  "generated_utc": "2026-09-23T19:10:44.548309+00:00",
+  "generated_utc": "2026-09-23T19:59:38.792929+00:00",
   "pipeline_run_id": "35907229635",
   "prediction_pipeline_run_id": "35907229635",
   "source_observation_date": "2026-09-21",
@@ -33,12 +33,12 @@
       "size_bytes": 940
     },
     "live_attribution_report.json": {
-      "sha256": "b96eeccfa944d199dfbf486fb8ba46f9762dc6bc59fc1c57a169b872b58235c7",
-      "size_bytes": 431
+      "sha256": "73ba27ea0aca26f60ce862d9acc0a4caeb637256a9726754c46cd30c1bfca4a2",
+      "size_bytes": 1757
     },
     "live_attribution_tape.csv": {
-      "sha256": "255d9e8728f8849ff70ad1916b85afc97089122671e62fcb34641c228cdd22a1",
-      "size_bytes": 90
+      "sha256": "03526a037c8c18165e2afde4ac6b73e41abff46dcd14a459b57bfb710219f214",
+      "size_bytes": 832
     },
     "part0_summary.json": {
       "sha256": "e85a6c8e079084a77021ed08963e1244ef4a0e7e14e00c93315da7f1d041605a",
@@ -57,8 +57,9 @@
       "size_bytes": 359
     },
     "prediction_log.csv": {
-      "sha256": "545197108528e4f872883309f4f54a41de07737a7947e7564cfaca8f9815c072",
-      "size_bytes": 1176
+      "sha256": "a97f81d51ef429395160f3d31384519412be39950718dfab528a996332ec18e2",
+      "size_bytes": 1214
     }
-  }
+  },
+  "last_backfill_run_id": "35912850202"
 }

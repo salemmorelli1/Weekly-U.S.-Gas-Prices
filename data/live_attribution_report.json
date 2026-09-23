@@ -1,12 +1,79 @@
 {
   "script_version": "GAS_PART9_V3_HAC_ELIGIBLE_COHORT",
-  "run_utc": "2026-09-23T19:10:44.056211+00:00",
-  "n_realized": 0,
-  "health_status": "INSUFFICIENT_DATA",
-  "message": "No realized rows in prediction log yet.",
+  "run_utc": "2026-09-23T19:59:38.302993+00:00",
+  "n_realized": 1,
+  "all_time_metrics": {
+    "mae": null,
+    "rmse": null,
+    "mape": null,
+    "dir_acc": 0.0,
+    "n_realized": 1
+  },
+  "naive_metrics": {
+    "mae": null,
+    "rmse": null,
+    "mape": null,
+    "dir_acc": null
+  },
+  "rolling_metrics": {
+    "rolling_4w": {
+      "mae": null,
+      "rmse": null,
+      "mape": null,
+      "dir_acc": 0.0,
+      "n": 1
+    },
+    "rolling_8w": {
+      "mae": null,
+      "rmse": null,
+      "mape": null,
+      "dir_acc": 0.0,
+      "n": 1
+    },
+    "rolling_13w": {
+      "mae": null,
+      "rmse": null,
+      "mape": null,
+      "dir_acc": 0.0,
+      "n": 1
+    },
+    "rolling_26w": {
+      "mae": null,
+      "rmse": null,
+      "mape": null,
+      "dir_acc": 0.0,
+      "n": 1
+    }
+  },
+  "diebold_mariano": {
+    "dm_method": "DIEBOLD_MARIANO_HLN_HAC",
+    "dm_n": 1,
+    "dm_alpha": 0.1,
+    "dm_hac_lags": null,
+    "dm_mean_loss_advantage": null,
+    "dm_t_stat": null,
+    "dm_p_value": null,
+    "dm_interpretation": "INSUFFICIENT_DATA"
+  },
+  "concept_drift": {
+    "drift_detected": false,
+    "status": "INSUFFICIENT_DATA",
+    "recent_rmse": null,
+    "historical_rmse": null,
+    "rmse_ratio": null
+  },
+  "model_health": {
+    "health_status": "INSUFFICIENT_DATA",
+    "n_realized": 1,
+    "min_required": 52,
+    "issues": [
+      "Only 1 realized observations (min 52)"
+    ],
+    "recommendation": "Continue accumulating live data before evaluation."
+  },
+  "beats_naive_pct": 0.0,
   "cohort_contract": "prospective_exact_target_only",
-  "min_required": 52,
-  "pipeline_run_id": "35907229635",
+  "pipeline_run_id": "35912850202",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "cf8edf46b52eb151f0f4d377ca773312b08973cb"
+  "source_code_sha": "005f24f7a5ccfde8b7d0f7e250654932f0f155fe"
 }
