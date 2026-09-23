@@ -1,13 +1,13 @@
 {
-  "script_version": "GAS_PART1_V2_CAUSAL_FEATURES",
-  "run_utc": "2026-09-15T19:10:52.290475+00:00",
-  "n_weeks": 1394,
-  "n_labeled_rows": 1393,
+  "script_version": "GAS_PART1_V3_POINT_IN_TIME_FEATURES",
+  "run_utc": "2026-09-23T19:09:41.308826+00:00",
+  "n_weeks": 1395,
+  "n_labeled_rows": 1394,
   "n_live_rows": 1,
   "live_week_dates": [
-    "2026-09-14"
+    "2026-09-21"
   ],
-  "n_features": 99,
+  "n_features": 88,
   "feature_names": [
     "eia_gas_days_supply",
     "eia_gas_stocks_total_zscore",
@@ -58,14 +58,6 @@
     "wti_crude_ret_12w",
     "wti_crude_vol_4w",
     "wti_crude_vol_8w",
-    "rbob_gasoline_lag_1w",
-    "rbob_gasoline_ret_1w",
-    "rbob_gasoline_lag_2w",
-    "rbob_gasoline_ret_2w",
-    "rbob_gasoline_lag_4w",
-    "rbob_gasoline_ret_4w",
-    "rbob_gasoline_lag_8w",
-    "rbob_gasoline_ret_8w",
     "natural_gas_lag_1w",
     "natural_gas_ret_1w",
     "natural_gas_lag_4w",
@@ -75,8 +67,6 @@
     "crack_spread",
     "crack_spread_z",
     "crack_spread_chg_4w",
-    "rbob_crack_spread",
-    "rbob_crack_z",
     "month_01",
     "month_02",
     "month_03",
@@ -105,25 +95,25 @@
     "sp500_ret_4w",
     "sp500_vol_8w",
     "xle_ret_4w",
-    "cpi_energy_chg_4w",
     "eia_days_supply",
     "eia_days_supply_z"
   ],
   "target_col": "target_gas_price",
-  "target_mean": 2.6166611629576453,
-  "target_std": 0.7726384096836464,
+  "target_mean": 2.6186197991391675,
+  "target_std": 0.7729953813903322,
   "target_min": 1.042,
   "target_max": 4.844,
   "date_range": {
     "start": "2000-01-03",
-    "end": "2026-09-14"
+    "end": "2026-09-21"
   },
   "high_nan_features": {},
   "horizon_weeks": 1,
   "predictive_regime_features_enabled": false,
-  "feature_matrix_sha256": "0742a087a6f2f9253bb2f1a1df986249e278257b054c6057d115a35ce00f7d68",
-  "target_sha256": "8cbc203b26ca9871fb3eb2a2481eb26f875287b632f39d5ed7c09e339ebd9243",
-  "pipeline_run_id": "35011816348",
+  "non_vintage_macro_features_enabled": false,
+  "feature_matrix_sha256": "62a18c928e84b523eeb2b32ddfc433d42502396fac6ffeec80901f4d929fca23",
+  "target_sha256": "bd3361f09bf745b71abdacb91435624499da31d5d0c53f990ec8807d7f703a1f",
+  "pipeline_run_id": "35907229635",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "6789ff8539cd3bea806381f1b8d105f11d9e0414"
+  "source_code_sha": "cf8edf46b52eb151f0f4d377ca773312b08973cb"
 }

@@ -1,7 +1,7 @@
 {
   "script_version": "GAS_PART0_V2_RELEASE_CONTRACT",
-  "run_utc": "2026-09-15T19:09:59.580527+00:00",
-  "n_weeks": 1394,
+  "run_utc": "2026-09-23T19:08:57.424704+00:00",
+  "n_weeks": 1395,
   "n_columns": 19,
   "columns": [
     "week_date",
@@ -26,19 +26,19 @@
   ],
   "schema_hash": "719ca52bb838f58e41c30f7513c316c518707f34ba3b1f1b0bde977b344aba16",
   "freshness": {
-    "latest_week": "2026-09-14",
-    "forecast_target_week": "2026-09-21",
-    "decision_date_eastern": "2026-09-15",
-    "age_days": 1,
-    "n_weeks": 1394,
+    "latest_week": "2026-09-21",
+    "forecast_target_week": "2026-09-28",
+    "decision_date_eastern": "2026-09-23",
+    "age_days": 2,
+    "n_weeks": 1395,
     "has_min_history": true,
     "source_week_is_monday": true,
     "target_is_prospective": true,
     "data_freshness_ok": true,
     "freshness_status": "OK"
   },
-  "master_parquet_sha256": "76335fe3b93547dacbcd987c0fd7fccb3b47b6414c17ed100307748225360e26",
-  "pipeline_run_id": "35011816348",
+  "master_parquet_sha256": "38cb10737b99790f127c9dc8f64f1bcb6ed3429002d0370105038ef9c14a9127",
+  "pipeline_run_id": "35907229635",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "6789ff8539cd3bea806381f1b8d105f11d9e0414"
+  "source_code_sha": "cf8edf46b52eb151f0f4d377ca773312b08973cb"
 }

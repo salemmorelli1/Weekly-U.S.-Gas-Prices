@@ -1,25 +1,25 @@
 {
   "script_version": "GAS_PART2B_V2_FAIL_CLOSED",
-  "run_utc": "2026-09-15T19:12:00.543019+00:00",
+  "run_utc": "2026-09-23T19:10:42.412998+00:00",
   "xgb_sleeve_recommended": false,
-  "xgb_val_rmse": 0.1313696255224584,
-  "baseline_val_rmse": 0.137,
+  "xgb_val_rmse": 0.13703735585735777,
+  "baseline_val_rmse": 0.1543,
   "xgb_metrics": {
-    "val_rmse": 0.1314,
-    "val_mae": 0.0877,
-    "val_mape": 2.4738,
+    "val_rmse": 0.137,
+    "val_mae": 0.0908,
+    "val_mape": 2.4618,
     "n_configs": 3
   },
   "latest_forecast": {
-    "anchor_week": "2026-09-14",
-    "target_week": "2026-09-21",
-    "pred_xgb": 4.0052,
+    "anchor_week": "2026-09-21",
+    "target_week": "2026-09-28",
+    "pred_xgb": 4.3851,
     "is_true_live_forecast": true
   },
   "n_configs_trained": 3,
   "gate_window": "last_val_weeks_labeled_rows",
   "core_operator_validated": false,
-  "pipeline_run_id": "35011816348",
+  "pipeline_run_id": "35907229635",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "6789ff8539cd3bea806381f1b8d105f11d9e0414"
+  "source_code_sha": "cf8edf46b52eb151f0f4d377ca773312b08973cb"
 }
