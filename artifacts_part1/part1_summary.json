@@ -1,13 +1,13 @@
 {
   "script_version": "GAS_PART1_V3_POINT_IN_TIME_FEATURES",
-  "run_utc": "2026-09-23T19:09:41.308826+00:00",
-  "n_weeks": 1395,
-  "n_labeled_rows": 1394,
+  "run_utc": "2026-09-29T20:11:05.315297+00:00",
+  "n_weeks": 1396,
+  "n_labeled_rows": 1395,
   "n_live_rows": 1,
   "live_week_dates": [
-    "2026-09-21"
+    "2026-09-28"
   ],
-  "n_features": 88,
+  "n_features": 98,
   "feature_names": [
     "eia_gas_days_supply",
     "eia_gas_stocks_total_zscore",
@@ -58,6 +58,14 @@
     "wti_crude_ret_12w",
     "wti_crude_vol_4w",
     "wti_crude_vol_8w",
+    "rbob_gasoline_lag_1w",
+    "rbob_gasoline_ret_1w",
+    "rbob_gasoline_lag_2w",
+    "rbob_gasoline_ret_2w",
+    "rbob_gasoline_lag_4w",
+    "rbob_gasoline_ret_4w",
+    "rbob_gasoline_lag_8w",
+    "rbob_gasoline_ret_8w",
     "natural_gas_lag_1w",
     "natural_gas_ret_1w",
     "natural_gas_lag_4w",
@@ -67,6 +75,8 @@
     "crack_spread",
     "crack_spread_z",
     "crack_spread_chg_4w",
+    "rbob_crack_spread",
+    "rbob_crack_z",
     "month_01",
     "month_02",
     "month_03",
@@ -99,21 +109,21 @@
     "eia_days_supply_z"
   ],
   "target_col": "target_gas_price",
-  "target_mean": 2.6186197991391675,
-  "target_std": 0.7729953813903322,
+  "target_mean": 2.619831541218638,
+  "target_std": 0.7740423283778802,
   "target_min": 1.042,
   "target_max": 4.844,
   "date_range": {
     "start": "2000-01-03",
-    "end": "2026-09-21"
+    "end": "2026-09-28"
   },
   "high_nan_features": {},
   "horizon_weeks": 1,
   "predictive_regime_features_enabled": false,
   "non_vintage_macro_features_enabled": false,
-  "feature_matrix_sha256": "62a18c928e84b523eeb2b32ddfc433d42502396fac6ffeec80901f4d929fca23",
-  "target_sha256": "bd3361f09bf745b71abdacb91435624499da31d5d0c53f990ec8807d7f703a1f",
-  "pipeline_run_id": "35907229635",
+  "feature_matrix_sha256": "b4608863cd198de4d449043bcba6a598dfe8872a4b5f33e2286fd14872e9d1d1",
+  "target_sha256": "6b5003a59d02abe96b6764a81a1522099089988ed7c385ae1a1848fded4b92de",
+  "pipeline_run_id": "36624230171",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "cf8edf46b52eb151f0f4d377ca773312b08973cb"
+  "source_code_sha": "ed399219c0cad84c6e066ca868a0b4f943b2679f"
 }

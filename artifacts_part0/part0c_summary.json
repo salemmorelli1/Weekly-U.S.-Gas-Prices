@@ -1,7 +1,7 @@
 {
   "script_version": "GAS_PART0C_V2_CAUSAL_AVAILABILITY",
-  "run_utc": "2026-09-23T19:09:37.937058+00:00",
-  "n_weeks": 1395,
+  "run_utc": "2026-09-29T20:11:01.744000+00:00",
+  "n_weeks": 1396,
   "eia_series_fetched": 15,
   "eia_series_names": [
     "eia_gas_us_regular",
@@ -21,27 +21,27 @@
     "eia_gas_chg_12w"
   ],
   "coverage_n_obs": {
-    "eia_gas_us_regular": 1395,
-    "eia_gas_stocks_total": 1394,
-    "eia_crude_stocks": 1394,
-    "eia_total_pet_stocks": 1394,
-    "eia_gas_demand": 1394,
-    "eia_crude_input_mbbl": 1394,
-    "eia_crude_imports": 1394,
-    "eia_gas_days_supply": 1394,
-    "eia_gas_stocks_total_zscore": 1381,
-    "eia_crude_stocks_zscore": 1381,
-    "eia_total_pet_stocks_zscore": 1381,
-    "eia_gas_demand_trend": 1381,
-    "eia_gas_chg_1w": 1393,
-    "eia_gas_chg_4w": 1390,
-    "eia_gas_chg_12w": 1382
+    "eia_gas_us_regular": 1396,
+    "eia_gas_stocks_total": 1395,
+    "eia_crude_stocks": 1395,
+    "eia_total_pet_stocks": 1395,
+    "eia_gas_demand": 1395,
+    "eia_crude_input_mbbl": 1395,
+    "eia_crude_imports": 1395,
+    "eia_gas_days_supply": 1395,
+    "eia_gas_stocks_total_zscore": 1382,
+    "eia_crude_stocks_zscore": 1382,
+    "eia_total_pet_stocks_zscore": 1382,
+    "eia_gas_demand_trend": 1382,
+    "eia_gas_chg_1w": 1394,
+    "eia_gas_chg_4w": 1391,
+    "eia_gas_chg_12w": 1383
   },
   "history_start": "2000-01-01",
-  "history_end": "2026-09-23",
+  "history_end": "2026-09-29",
   "fundamental_availability_lag_weeks": 1,
-  "master_parquet_sha256": "17dd151a65def753f149a0fbfa0d779561f1f4ce5ceb3592f833e691a8e4a2fb",
-  "pipeline_run_id": "35907229635",
+  "master_parquet_sha256": "0814e10d9fc940509109f1e5413ce0f074c7f3494a31112f68eb35cc027a3fee",
+  "pipeline_run_id": "36624230171",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "cf8edf46b52eb151f0f4d377ca773312b08973cb"
+  "source_code_sha": "ed399219c0cad84c6e066ca868a0b4f943b2679f"
 }
