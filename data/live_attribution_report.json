@@ -1,53 +1,53 @@
 {
   "script_version": "GAS_PART9_V3_HAC_ELIGIBLE_COHORT",
-  "run_utc": "2026-09-29T20:12:14.821176+00:00",
-  "n_realized": 1,
+  "run_utc": "2026-09-30T21:17:03.727188+00:00",
+  "n_realized": 2,
   "all_time_metrics": {
-    "mae": null,
-    "rmse": null,
-    "mape": null,
+    "mae": 0.0985,
+    "rmse": 0.1211,
+    "mape": 2.2733,
     "dir_acc": 0.0,
-    "n_realized": 1
+    "n_realized": 2
   },
   "naive_metrics": {
-    "mae": null,
-    "rmse": null,
-    "mape": null,
+    "mae": 0.0985,
+    "rmse": 0.1211,
+    "mape": 2.2733,
     "dir_acc": null
   },
   "rolling_metrics": {
     "rolling_4w": {
-      "mae": null,
-      "rmse": null,
-      "mape": null,
+      "mae": 0.0985,
+      "rmse": 0.1211,
+      "mape": 2.2733,
       "dir_acc": 0.0,
-      "n": 1
+      "n": 2
     },
     "rolling_8w": {
-      "mae": null,
-      "rmse": null,
-      "mape": null,
+      "mae": 0.0985,
+      "rmse": 0.1211,
+      "mape": 2.2733,
       "dir_acc": 0.0,
-      "n": 1
+      "n": 2
     },
     "rolling_13w": {
-      "mae": null,
-      "rmse": null,
-      "mape": null,
+      "mae": 0.0985,
+      "rmse": 0.1211,
+      "mape": 2.2733,
       "dir_acc": 0.0,
-      "n": 1
+      "n": 2
     },
     "rolling_26w": {
-      "mae": null,
-      "rmse": null,
-      "mape": null,
+      "mae": 0.0985,
+      "rmse": 0.1211,
+      "mape": 2.2733,
       "dir_acc": 0.0,
-      "n": 1
+      "n": 2
     }
   },
   "diebold_mariano": {
     "dm_method": "DIEBOLD_MARIANO_HLN_HAC",
-    "dm_n": 1,
+    "dm_n": 2,
     "dm_alpha": 0.1,
     "dm_hac_lags": null,
     "dm_mean_loss_advantage": null,
@@ -64,16 +64,16 @@
   },
   "model_health": {
     "health_status": "INSUFFICIENT_DATA",
-    "n_realized": 1,
+    "n_realized": 2,
     "min_required": 52,
     "issues": [
-      "Only 1 realized observations (min 52)"
+      "Only 2 realized observations (min 52)"
     ],
     "recommendation": "Continue accumulating live data before evaluation."
   },
   "beats_naive_pct": 0.0,
   "cohort_contract": "prospective_exact_target_only",
-  "pipeline_run_id": "36624230171",
+  "pipeline_run_id": "36778319611",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "ed399219c0cad84c6e066ca868a0b4f943b2679f"
+  "source_code_sha": "c26d850c7cebba97debd8d24b7b5cfc3886666f2"
 }
