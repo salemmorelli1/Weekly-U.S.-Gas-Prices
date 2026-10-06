@@ -1,6 +1,6 @@
 {
   "script_version": "GAS_PART3_V2_IMMUTABLE_LEDGER",
-  "run_utc": "2026-09-29T20:12:13.639747+00:00",
+  "run_utc": "2026-10-06T20:31:05.481179+00:00",
   "active_sleeves": [
     "part2"
   ],
@@ -8,25 +8,25 @@
     "part2": 1.0
   },
   "latest_prediction": {
-    "decision_date": "2026-09-29",
-    "target_date": "2026-10-05",
-    "anchor_week": "2026-09-28",
+    "decision_date": "2026-10-06",
+    "target_date": "2026-10-12",
+    "anchor_week": "2026-10-05",
     "is_live_forecast": 1,
-    "pred_fusion": 4.309,
-    "pred_candidate": 4.2777,
-    "pred_persistence": 4.309,
+    "pred_fusion": 4.157,
+    "pred_candidate": 4.1469,
+    "pred_persistence": 4.157,
     "confidence": "NOT_VALIDATED",
-    "regime": "NORMAL__STATE_2",
+    "regime": "NORMAL__STATE_0",
     "operator_validated": false,
     "publication_mode": "FAIL_CLOSED_PERSISTENCE",
-    "pipeline_run_id": "36624230171",
+    "pipeline_run_id": "37526749289",
     "pipeline_run_attempt": "1",
-    "source_code_sha": "ed399219c0cad84c6e066ca868a0b4f943b2679f"
+    "source_code_sha": "57ba9ba86cc1e74ff5adcb9c876f876ea2fcfbb8"
   },
-  "prediction_log_rows": 5,
+  "prediction_log_rows": 6,
   "operator_validated": false,
   "publication_mode": "FAIL_CLOSED_PERSISTENCE",
-  "pipeline_run_id": "36624230171",
+  "pipeline_run_id": "37526749289",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "ed399219c0cad84c6e066ca868a0b4f943b2679f"
+  "source_code_sha": "57ba9ba86cc1e74ff5adcb9c876f876ea2fcfbb8"
 }
