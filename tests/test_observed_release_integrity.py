@@ -39,6 +39,17 @@ def test_regular_conventional_series_is_shared_by_ingestion_and_backfill(monkeyp
     assert series.loc['2026-09-14'] == 4.1
 
 
+def test_midgrade_source_is_labeled_accurately_and_remains_diagnostic():
+    sources=part0.get_fred_series()
+    assert sources['gas_us_midgrade_conventional']=='GASMIDCOVW'
+    assert 'gas_midwest' not in sources
+    frame=pd.DataFrame({'week_date':pd.date_range('2024-01-01',periods=16,freq='W-MON'),
+                        'gas_us_avg':np.linspace(3.5,4,16),
+                        'gas_us_midgrade_conventional':np.linspace(4,4.5,16)})
+    features,_=part1.build_feature_matrix(frame,None,part1.Part1Config())
+    assert 'gas_us_midgrade_conventional' not in features
+
+
 @pytest.mark.parametrize('reported,units', [('EMD_EPD2D_PTE_NUS_DPG', '$/GAL'),
                                           ('EMM_EPMRU_PTE_NUS_DPG', 'percent')])
 def test_provider_product_and_units_must_match_the_target(reported, units):

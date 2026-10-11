@@ -404,7 +404,7 @@ def build_feature_matrix(
     exclude_cols = {
         "gas_us_avg", "wti_crude", "rbob_gasoline", "natural_gas",
         "brent_etf", "uso_etf", "ung_etf", "usd_index", "treasury_10y",
-        "sp500", "energy_xle", "gas_midwest", "gas_gulf", "gas_east", "gas_west",
+        "sp500", "energy_xle", "gas_midwest", "gas_us_midgrade_conventional", "gas_gulf", "gas_east", "gas_west",
         "crude_wti", "crude_brent", "gas_stocks", "gas_demand", "crude_stocks",
         "cpi_energy", "cpi_gasoline", "unemployment", "gdp_growth",
         "eia_gas_us_regular", "eia_gas_us_midgrade", "eia_gas_us_premium",

@@ -9,6 +9,7 @@ Original tree: `55c9ecb106404c8b619df97e2afa6f0f694163df`.
 | Finding | Reproduction or source evidence | Correction |
 | --- | --- | --- |
 | The direct EIA outcome fallback requested diesel. The supplementary price mappings also mislabeled diesel as regular gasoline, used nonexistent diesel-like IDs for midgrade/premium, and mislabeled an all-grade gasoline ID as diesel. | `PET.EMD_EPD2D_PTE_NUS_DPG.W` is No. 2 diesel. The actual forecast target `GASREGCOVW` is regular **conventional** gasoline, whose EIA counterpart is `PET.EMM_EPMRU_PTE_NUS_DPG.W`. | Share exact target IDs between ingestion and backfill. Correct the other price mappings and reject provider responses naming a different series or unit. Clarify the dashboard's target formulation. |
+| A diagnostic FRED series was mislabeled as Midwest gasoline. | `GASMIDCOVW` is U.S. **midgrade conventional** gasoline. | Rename that diagnostic input accurately and continue excluding it from the predictive feature matrix. |
 | Missing gas surveys could be promoted to observations. | A FRED fixture with `3.8` on September 7 and a missing September 14 became `3.8` on September 14 after weekly resampling/forward filling. | Retain exact Monday survey labels and missing prices. Reject duplicate/non-Monday labels and nonpositive/nonfinite prices. Keep interior calendar gaps; trim only unobserved edges. Local backfill sources require the exact-observation contract and their producing content hash. |
 | H=1 could become H=2 across a missing survey. | With observations September 7 and September 21, positional `shift(-1)` assigned September 21 as September 7's next-week target. Dropping missing weeks similarly compressed lag windows. | Join targets by anchor + seven calendar days, reindex feature inputs to the complete weekly calendar, preserve missing return values, and publish only the latest actually observed source row. |
 | Days-of-supply units were wrong by a factor of seven. | Stocks of 210,000 thousand barrels and demand of 9,000 thousand barrels **per day** produced 163.333 days instead of 23.333. | Divide stocks directly by the already daily demand rate in both feature builders. Keep the existing conservative release lag. |
@@ -20,6 +21,7 @@ Original tree: `55c9ecb106404c8b619df97e2afa6f0f694163df`.
 ## Primary source verification
 
 - [FRED GASREGCOVW](https://fred.stlouisfed.org/series/GASREGCOVW): U.S. regular conventional gasoline, dollars per gallon. Its October 5 observation is 4.157.
+- [FRED GASMIDCOVW](https://fred.stlouisfed.org/series/GASMIDCOVW): U.S. midgrade conventional gasoline, not a Midwest regional series.
 - [EIA regular conventional API series](https://www.eia.gov/opendata/browser/petroleum/pri/gnd?data=value%3B&facets=series%3B&frequency=weekly&series=EMM_EPMRU_PTE_NUS_DPG%3B&sortColumn=period%3B&sortDirection=desc): product EPMRU, conventional regular gasoline.
 - [EIA old fallback](https://www.eia.gov/opendata/series.php?sdid=PET.EMD_EPD2D_PTE_NUS_DPG.W): U.S. No. 2 diesel retail prices.
 - [EIA weekly products supplied](https://www.eia.gov/dnav/pet/pet_cons_wpsup_k_w.htm): thousand barrels per day.

@@ -110,7 +110,7 @@ def get_fred_series() -> Dict[str, str]:
     """FRED identifiers verified for the production source contract."""
     return {
         "gas_us_avg": FRED_TARGET_SERIES,
-        "gas_midwest": "GASMIDCOVW",
+        "gas_us_midgrade_conventional": "GASMIDCOVW",
         "crude_wti": "DCOILWTICO",
         "crude_brent": "DCOILBRENTEU",
         "cpi_energy": "CPIENGSL",
