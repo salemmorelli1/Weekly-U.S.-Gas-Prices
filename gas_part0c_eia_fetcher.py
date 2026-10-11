@@ -62,11 +62,11 @@ def _colab_init(extra_packages=None):
 
 _colab_init(extra_packages=["requests", "pyarrow"])
 
-import json, os, time, warnings
+import os, time, warnings
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -76,17 +76,19 @@ from gas_time_contract import pipeline_identity, sha256_file, strict_json_dump
 
 warnings.filterwarnings("ignore")
 
-SCRIPT_VERSION = "GAS_PART0C_V2_CAUSAL_AVAILABILITY"
+from gas_source_contract import EIA_TARGET_SERIES, eia_price_records
+
+SCRIPT_VERSION = "GAS_PART0C_V3_SERIES_UNITS"
 
 EIA_API_BASE = "https://api.eia.gov/v2"
 
 # EIA series IDs and clean names
 EIA_SERIES: Dict[str, str] = {
     # Prices
-    "eia_gas_us_regular":    "PET.EMD_EPD2D_PTE_NUS_DPG.W",
-    "eia_gas_us_midgrade":   "PET.EMD_EPD2DM_PTE_NUS_DPG.W",
-    "eia_gas_us_premium":    "PET.EMD_EPD2DP_PTE_NUS_DPG.W",
-    "eia_gas_us_diesel":     "PET.EMD_EPM0_PTE_NUS_DPG.W",
+    "eia_gas_us_regular":    EIA_TARGET_SERIES,
+    "eia_gas_us_midgrade":   "PET.EMM_EPMM_PTE_NUS_DPG.W",
+    "eia_gas_us_premium":    "PET.EMM_EPMP_PTE_NUS_DPG.W",
+    "eia_gas_us_diesel":     "PET.EMD_EPD2D_PTE_NUS_DPG.W",
     # Stocks & supply
     "eia_gas_stocks_total":  "PET.WGTSTUS1.W",
     "eia_crude_stocks":      "PET.WCRSTUS1.W",
@@ -173,6 +175,11 @@ class EIAClient:
                 rows = data.get("response", {}).get("data", [])
                 if not rows:
                     return pd.Series(dtype=float, name=series_id)
+
+                if series_id in {EIA_SERIES[name] for name in (
+                    "eia_gas_us_regular", "eia_gas_us_midgrade", "eia_gas_us_premium", "eia_gas_us_diesel"
+                )}:
+                    return eia_price_records(rows, series_id)
 
                 records = []
                 for row in rows:
@@ -263,7 +270,8 @@ def compute_eia_derived_features(df: pd.DataFrame, cfg: Part0cConfig) -> pd.Data
 
     # --- Days-of-supply (stocks / (demand_per_day)) ---
     if "eia_gas_stocks_total" in df.columns and "eia_gas_demand" in df.columns:
-        daily_demand = df["eia_gas_demand"] / 7.0  # weekly -> daily
+        # WGFUPUS2 is thousand barrels per DAY; stocks are thousand barrels.
+        daily_demand = df["eia_gas_demand"]
         df["eia_gas_days_supply"] = df["eia_gas_stocks_total"] / daily_demand.replace(0, np.nan)
 
     # --- Stock deviation from rolling mean (z-score) ---
@@ -286,9 +294,9 @@ def compute_eia_derived_features(df: pd.DataFrame, cfg: Part0cConfig) -> pd.Data
 
     # --- Price momentum (EIA price series) ---
     if "eia_gas_us_regular" in df.columns:
-        df["eia_gas_chg_1w"]  = df["eia_gas_us_regular"].pct_change(1).shift(1)
-        df["eia_gas_chg_4w"]  = df["eia_gas_us_regular"].pct_change(4).shift(1)
-        df["eia_gas_chg_12w"] = df["eia_gas_us_regular"].pct_change(12).shift(1)
+        df["eia_gas_chg_1w"]  = df["eia_gas_us_regular"].pct_change(1, fill_method=None).shift(1)
+        df["eia_gas_chg_4w"]  = df["eia_gas_us_regular"].pct_change(4, fill_method=None).shift(1)
+        df["eia_gas_chg_12w"] = df["eia_gas_us_regular"].pct_change(12, fill_method=None).shift(1)
 
         # Crack spread proxy: gas vs crude price level ratio
         pass  # Handled in Part1 when both series are available
@@ -351,6 +359,8 @@ def write_part0c_summary(
         "history_start": cfg.history_start,
         "history_end": cfg.history_end,
         "fundamental_availability_lag_weeks": 1,
+        "price_series_ids": {name: value for name, value in EIA_SERIES.items() if name.startswith("eia_gas_us_")},
+        "days_supply_units": "thousand_barrels / thousand_barrels_per_day",
         "master_parquet_sha256": (
             sha256_file(out_dir / "gas_weekly_master.parquet")
             if (out_dir / "gas_weekly_master.parquet").exists()

@@ -67,7 +67,9 @@ import pandas as pd
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
-from gas_time_contract import pipeline_identity, strict_json_dump
+from gas_time_contract import pipeline_identity, sha256_file, strict_json_dump
+from gas_validation import NESTED_PROTOCOL, aligned_oof, candidate_gate
+from gas_part2_forecaster import validate_feature_lineage
 
 warnings.filterwarnings("ignore")
 
@@ -79,7 +81,7 @@ except ImportError:
     HAVE_XGB = False
     print("[Part2b] XGBoost not installed. Install: pip install xgboost")
 
-SCRIPT_VERSION = "GAS_PART2B_V2_FAIL_CLOSED"
+SCRIPT_VERSION = "GAS_PART2B_V3_NESTED_OOF"
 
 
 @dataclass(frozen=True)
@@ -168,98 +170,71 @@ def train_xgb_ensemble(
     X: pd.DataFrame,
     y: pd.Series,
     cfg: Part2bConfig,
-) -> Tuple[List[object], np.ndarray, np.ndarray, Dict[str, float], Optional[object]]:
-    """
-    Train multiple XGB configs, evaluate on the common gate window, then
-    re-fit every member on ALL labeled rows for the live forecast.
-    Returns (models, val_preds_ensemble, val_actuals, val_metrics, imputer).
+) -> Tuple[List[object], np.ndarray, np.ndarray, Dict, Optional[object], pd.DataFrame]:
+    """Tune stopping on inner history, then score untouched outer blocks."""
+    from gas_validation import blocked_folds
 
-    FIX (Audit 2026-08) — three defects corrected here:
-      1. Return-arity crash: the no-XGB path returned a 4-tuple while the
-         caller unpacked 5 names. All paths now return the same 5-tuple.
-      2. Early-stopping refit crash: XGBRegressor was constructed with
-         early_stopping_rounds=50 and then re-fit WITHOUT an eval_set, which
-         raises in xgboost >= 1.6. The refit now uses a fresh estimator with
-         the validated best_iteration as n_estimators and no early stopping.
-      3. Imputer leakage: the median imputer was fit on the full matrix
-         (train + val + future rows). It is now fit on training rows only.
-
-    The validation split is the last cfg.val_weeks labeled rows — the COMMON
-    GATE WINDOW shared with Part 2 and Part 2a so gate RMSEs are comparable.
-    X and y must already be labeled-rows-only.
-    """
     if not HAVE_XGB:
-        return [], np.array([]), np.array([]), {}, None
+        return [], np.array([]), np.array([]), {}, None, pd.DataFrame()
+    columns = get_feature_cols(X)
+    values = X[columns].replace([np.inf, -np.inf], np.nan).to_numpy()
+    actual = pd.to_numeric(y).to_numpy(dtype=float)
+    start, folds = blocked_folds(len(y), cfg.val_weeks)
+    predictions = np.full(len(y) - start, np.nan)
+    fold_ids = np.zeros(len(predictions), dtype=int)
+    rounds = [[] for _ in cfg.xgb_configs]
 
-    feature_cols = get_feature_cols(X)
-    n = len(y)
-    val_len = min(cfg.val_weeks, max(1, int(n * 0.25)))
-    train_end = n - val_len
-    val_end   = n
-    print(f"[Part2b] Common gate window: train 0:{train_end}, "
-          f"val {train_end}:{val_end} (last {val_len} labeled weeks)")
+    for fold_id, positions in enumerate(folds, start=1):
+        stop = int(positions[0])
+        inner_len = min(cfg.val_weeks, max(8, stop // 5))
+        inner_stop = stop - inner_len
+        if inner_stop < 8:
+            raise ValueError("Insufficient inner training history for XGBoost")
+        tuning_imputer = SimpleImputer(strategy="median", keep_empty_features=True)
+        inner_train = tuning_imputer.fit_transform(values[:inner_stop])
+        inner_val = tuning_imputer.transform(values[inner_stop:stop])
+        fold_imputer = SimpleImputer(strategy="median", keep_empty_features=True)
+        fold_train = fold_imputer.fit_transform(values[:stop])
+        fold_test = fold_imputer.transform(values[positions])
+        members = []
+        for i, params in enumerate(cfg.xgb_configs):
+            tuned = xgb.XGBRegressor(**params, random_state=cfg.seed,
+                                    eval_metric="rmse", early_stopping_rounds=50, verbosity=0)
+            tuned.fit(inner_train, actual[:inner_stop],
+                      eval_set=[(inner_val, actual[inner_stop:stop])], verbose=False)
+            count = int(getattr(tuned, "best_iteration", params["n_estimators"] - 1)) + 1
+            rounds[i].append(count)
+            outer_params = {**params, "n_estimators": count}
+            outer = xgb.XGBRegressor(**outer_params, random_state=cfg.seed,
+                                    eval_metric="rmse", verbosity=0)
+            outer.fit(fold_train, actual[:stop])
+            members.append(outer.predict(fold_test))
+        predictions[positions - start] = np.mean(members, axis=0)
+        fold_ids[positions - start] = fold_id
 
-    # Impute NaN values — fit on TRAIN rows only (no leakage), then transform.
     imputer = SimpleImputer(strategy="median", keep_empty_features=True)
-    Xtr  = imputer.fit_transform(X[feature_cols].values[:train_end])
-    Xval = imputer.transform(X[feature_cols].values[train_end:val_end])
-    ytr, yval = y.values[:train_end], y.values[train_end:val_end]
-
-    models: List[object] = []
-    all_val_preds: List[np.ndarray] = []
-
-    for i, xgb_params in enumerate(cfg.xgb_configs):
-        print(f"[Part2b] Training XGB config {i + 1}/{len(cfg.xgb_configs)}: {xgb_params}")
-        es_model = xgb.XGBRegressor(
-            **xgb_params,
-            random_state=cfg.seed,
-            eval_metric="rmse",
-            early_stopping_rounds=50,
-            verbosity=0,
-        )
-        es_model.fit(Xtr, ytr, eval_set=[(Xval, yval)], verbose=False)
-        val_pred = es_model.predict(Xval)
-        rmse = float(np.sqrt(mean_squared_error(yval, val_pred)))
-        mae  = float(mean_absolute_error(yval, val_pred))
-
-        # Best boosting round found by early stopping on the gate window
-        best_iter = getattr(es_model, "best_iteration", None)
-        n_final = int(best_iter) + 1 if best_iter is not None else int(xgb_params["n_estimators"])
-        n_final = max(n_final, 10)
-        print(f"  Config {i + 1} val RMSE: {rmse:.4f} | MAE: {mae:.4f} | "
-              f"best_iteration -> n_estimators={n_final}")
-
-        # Re-fit a FRESH estimator (no early stopping) on ALL labeled rows.
-        final_params = dict(xgb_params)
-        final_params["n_estimators"] = n_final
-        final_model = xgb.XGBRegressor(
-            **final_params,
-            random_state=cfg.seed,
-            eval_metric="rmse",
-            verbosity=0,
-        )
-        X_all = imputer.transform(X[feature_cols].values)
-        final_model.fit(X_all, y.values)
-        models.append(final_model)
-        all_val_preds.append(val_pred)
-
-    # Simple average ensemble on the gate window
-    val_ensemble = np.mean(all_val_preds, axis=0)
-    val_actuals  = yval
-
-    xgb_rmse = float(np.sqrt(mean_squared_error(val_actuals, val_ensemble)))
-    xgb_mae  = float(mean_absolute_error(val_actuals, val_ensemble))
-    mape     = float(np.nanmean(np.abs((val_actuals - val_ensemble) /
-                                        np.where(val_actuals != 0, val_actuals, np.nan)))) * 100
-
+    complete = imputer.fit_transform(values)
+    models = []
+    for i, params in enumerate(cfg.xgb_configs):
+        final_params = {**params, "n_estimators": max(1, int(np.median(rounds[i])))}
+        model = xgb.XGBRegressor(**final_params, random_state=cfg.seed,
+                                eval_metric="rmse", verbosity=0)
+        model.fit(complete, actual)
+        models.append(model)
+    scored_actual = actual[start:]
     metrics = {
-        "val_rmse": xgb_rmse,
-        "val_mae": xgb_mae,
-        "val_mape": mape,
+        "val_rmse": float(np.sqrt(mean_squared_error(scored_actual, predictions))),
+        "val_mae": float(mean_absolute_error(scored_actual, predictions)),
+        "val_mape": float(np.mean(np.abs((scored_actual - predictions) / scored_actual)) * 100),
         "n_configs": len(models),
     }
-    print(f"[Part2b] XGB ensemble val RMSE: {xgb_rmse:.4f} | MAE: {xgb_mae:.4f}")
-    return models, val_ensemble, val_actuals, metrics, imputer
+    oof = pd.DataFrame({
+        "week_date": pd.to_datetime(X["week_date"].iloc[start:]).to_numpy(),
+        "actual": scored_actual, "pred_xgb_ensemble": predictions,
+        "pred_persistence": X["gas_us_avg_current"].iloc[start:].to_numpy(),
+        "fold": fold_ids,
+    })
+    return models, predictions, scored_actual, metrics, imputer, oof
 
 
 def predict_all(
@@ -305,11 +280,12 @@ def main() -> int:
         print(f"[Part2b] FATAL: {e}")
         return 1
 
+    validate_feature_lineage(part1_dir)
     X_lab, y_lab, X_live = split_labeled_live(X, y)
     print(f"[Part2b] Features: {len(X_lab)} labeled + {len(X_live)} live rows")
 
     # Train XGB ensemble on labeled rows only
-    models, val_ensemble, val_actuals, xgb_metrics, imputer = train_xgb_ensemble(
+    models, val_ensemble, val_actuals, xgb_metrics, imputer, oof = train_xgb_ensemble(
         X_lab, y_lab, cfg
     )
 
@@ -330,10 +306,15 @@ def main() -> int:
             "operator_validated", False
         )
     )
+    core_oof = pd.read_csv(part2_dir / "gas_oof_predictions.csv")
+    comparable = aligned_oof(core_oof, oof)
+    validation = candidate_gate(oof, "pred_xgb_ensemble")
+    core_validated = core_validated and comparable
     xgb_rmse = xgb_metrics["val_rmse"]
     if baseline_rmse is not None and np.isfinite(baseline_rmse):
         recommended = bool(
             core_validated
+            and validation["operator_validated"]
             and np.isfinite(xgb_rmse)
             and xgb_rmse < baseline_rmse
         )
@@ -366,6 +347,9 @@ def main() -> int:
     print(f"[Part2b] {live_tag} forecast — anchored {latest_week.date()}, "
           f"targeting week of {target_week.date()}: ${latest_pred:.3f}/gal")
 
+    oof_path = out_dir / "gas_xgb_oof.csv"
+    oof.to_csv(oof_path, index=False)
+
     # Write artifacts
     tape_path = out_dir / "gas_xgb_tape.parquet"
     tape.to_parquet(tape_path, index=False)
@@ -392,7 +376,12 @@ def main() -> int:
             "is_true_live_forecast": bool(n_live),
         },
         "n_configs_trained": len(models),
-        "gate_window": "last_val_weeks_labeled_rows",
+        "gate_window": "expanding_origin_blocked_oof",
+        "validation_protocol": NESTED_PROTOCOL,
+        "operator_validation": validation,
+        "oof_sha256": sha256_file(oof_path),
+        "forecast_tape_sha256": sha256_file(tape_path),
+        "feature_matrix_sha256": sha256_file(part1_dir / "gas_feature_matrix.parquet"),
         "core_operator_validated": core_validated,
         **pipeline_identity(),
     }

@@ -25,6 +25,7 @@ REQUIRED_SOURCES = (
     "artifacts_part3/gas_part3_summary.json",
     "artifacts_part3/pipeline_status.json",
     "artifacts_part3/prediction_log.csv",
+    "artifacts_part3/gas_fusion_oof.csv",
     "artifacts_part6/gas_regime_meta.json",
     "artifacts_part9/live_attribution_report.json",
     "artifacts_part9/live_attribution_tape.csv",
@@ -190,6 +191,15 @@ def stage_backfill(root: Path) -> Path:
         root / "artifacts_part9/live_attribution_report.json",
         root / "artifacts_part9/live_attribution_tape.csv",
     )
+    # Updating realized values must not silently re-sign a rewritten forecast.
+    prior = pd.read_csv(data_dir / "prediction_log.csv", dtype={"pipeline_run_id": "string"})
+    updated = pd.read_csv(sources[0], dtype={"pipeline_run_id": "string"})
+    mutable = {"actual", "actual_date", "mae", "rmse", "mape", "direction_correct"}
+    immutable = [key for key in prior if key not in mutable]
+    try:
+        pd.testing.assert_frame_equal(prior[immutable], updated[immutable], check_dtype=False)
+    except (AssertionError, KeyError) as exc:
+        raise ValueError("Backfill cannot rewrite immutable forecast inputs") from exc
     for source in sources:
         if not source.is_file():
             raise FileNotFoundError(f"backfill release file missing: {source}")

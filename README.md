@@ -1,6 +1,6 @@
 # Weekly U.S. Gas Prices
 
-Forecasts next week's U.S. average regular gas price (the weekly EIA number,
+Forecasts next week's U.S. regular conventional gasoline price (the weekly EIA series,
 `GASREGCOVW`). Runs after EIA's normal Tuesday publication of the Monday
 observation, logs an immutable forecast for the following Monday, then scores
 eligible forecasts after their exact target observation becomes available.
@@ -47,7 +47,9 @@ is known. Wednesday's backfill fills in the realized price and error metrics;
 Part 9 keeps a running paired test against the persistence value stored when
 each forecast was issued. Legacy same-day and hindsight rows are retained for
 audit history but excluded from the eligible live cohort. General live-health
-claims require at least 52 eligible realized observations.
+claims require at least 52 eligible realized observations. A recorded UTC issue
+time must agree with the Eastern decision date; each scored outcome must have
+a finite price, a finite frozen persistence comparator and its exact target date.
 
 ## Running it
 
@@ -109,3 +111,24 @@ available only as an explicitly labeled diagnostic view.
 Health thresholds Part 9 watches: MAPE over 3% is a warning, over 6% is a
 stop signal; direction accuracy under 50% is a warning; recent-vs-historical
 RMSE ratio over 1.5x flags drift.
+
+## October 11, 2026 source and sleeve audit
+
+The direct EIA fallback now uses `PET.EMM_EPMRU_PTE_NUS_DPG.W`, the
+regular conventional series matching `GASREGCOVW`. It previously requested
+diesel. Prices retain their exact Monday labels and missing surveys remain
+missing. Targets and lag features follow calendar weeks. Gasoline days of
+supply use stocks in thousand barrels divided by demand in thousand barrels
+per day; demand is already a daily rate.
+
+XGBoost and LSTM stopping parameters are selected on an inner chronological
+window before each scored outer block. Their OOF dates, targets and
+persistence values must match the core. Governance verifies the OOF and
+forecast tape hashes, source/target dates and feature matrix before admitting
+a sleeve, then evaluates fusion weights chosen from prior scored blocks.
+A failed fusion retains the validated core; a failed core retains persistence.
+
+The regression suite includes CPU training and an entirely disposable pipeline
+through publication staging and exact-target backfill. CI checks Linux and
+Windows. Existing published forecasts and the 52-observation health threshold
+remain unchanged. See `docs/SOURCE_SLEEVE_AUDIT_2026-10-11.md`.

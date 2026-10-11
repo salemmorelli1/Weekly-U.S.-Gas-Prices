@@ -62,7 +62,7 @@ import numpy as np
 import pandas as pd
 
 from gas_forecast_statistics import compare_squared_errors
-from gas_time_contract import pipeline_identity, protocol_eligible_record, strict_json_dump
+from gas_time_contract import eastern_today, pipeline_identity, protocol_eligible_record, strict_json_dump
 
 warnings.filterwarnings("ignore")
 
@@ -176,9 +176,21 @@ def load_realized_rows(predlog_path: Path) -> pd.DataFrame:
         int(protocol_eligible_record(record))
         for record in df.to_dict(orient="records")
     ]
-    realized = df[
-        df[actual_col].notna() & df["protocol_eligible"].eq(1)
-    ].copy()
+    if "target_date" not in df or "actual_date" not in df:
+        return pd.DataFrame()
+    targets = pd.to_datetime(df["target_date"], errors="coerce").dt.normalize()
+    actual_dates = pd.to_datetime(df["actual_date"], errors="coerce").dt.normalize()
+    baseline = pd.to_numeric(df.get("pred_persistence"), errors="coerce")
+    complete = (
+        np.isfinite(df[actual_col]) & df[actual_col].gt(0)
+        & np.isfinite(baseline) & baseline.gt(0)
+        & actual_dates.eq(targets)
+        & targets.le(eastern_today())
+        & df["protocol_eligible"].eq(1)
+    )
+    realized = df.loc[complete].copy()
+    if realized["target_date"].duplicated().any():
+        raise ValueError("Duplicate realized target dates cannot count as independent forecasts")
 
     if "target_date" in realized.columns:
         realized["target_date"] = pd.to_datetime(
@@ -245,7 +257,7 @@ def compute_naive_metrics(df: pd.DataFrame) -> Dict[str, float]:
         "mae": _mae(y_true, y_naive),
         "rmse": _rmse(y_true, y_naive),
         "mape": _mape(y_true, y_naive),
-        "dir_acc": _dir_acc(y_true, y_naive),
+        "dir_acc": float(np.mean(np.isclose(y_true, y_naive, rtol=0, atol=1e-12))) if len(y_true) else np.nan,
     }
 
 

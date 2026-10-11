@@ -82,7 +82,9 @@ from gas_time_contract import (
 
 warnings.filterwarnings("ignore")
 
-SCRIPT_VERSION = "GAS_PART3_V2_IMMUTABLE_LEDGER"
+from gas_validation import NESTED_PROTOCOL, aligned_oof, candidate_gate, prequential_fusion
+
+SCRIPT_VERSION = "GAS_PART3_V3_VERIFIED_FUSION"
 
 
 @dataclass(frozen=True)
@@ -170,7 +172,7 @@ def determine_active_sleeves(
         return {}, []
 
     core_rmse = core.get("val_metrics", {}).get("ensemble_rmse")
-    if core_rmse is None or not np.isfinite(float(core_rmse)) or float(core_rmse) <= 0:
+    if core_rmse is None or not np.isfinite(float(core_rmse)) or float(core_rmse) < 0:
         print("[Part3] FATAL: Part2 ensemble RMSE is missing or invalid.")
         return {}, []
 
@@ -183,25 +185,98 @@ def determine_active_sleeves(
     )
     for name, gate_key, rmse_key in candidates:
         summary = summaries.get(name)
-        if not summary or not summary.get(gate_key):
+        if not summary or not summary.get(gate_key) or summary.get("validation_protocol") != NESTED_PROTOCOL:
             print(f"[Part3] {name} EXCLUDED (gate not passed)")
             continue
         if not run_id or str(summary.get("pipeline_run_id", "")) != run_id:
             print(f"[Part3] {name} EXCLUDED (stale or mixed-run provenance)")
             continue
         rmse = summary.get(rmse_key)
-        if rmse is None or not np.isfinite(float(rmse)) or float(rmse) <= 0:
+        if rmse is None or not np.isfinite(float(rmse)) or float(rmse) < 0:
             print(f"[Part3] {name} EXCLUDED (invalid RMSE)")
             continue
         sleeve_rmse[name] = float(rmse)
 
-    inverse = {name: 1.0 / value for name, value in sleeve_rmse.items()}
+    inverse = {name: 1.0 / max(value, 1e-12) for name, value in sleeve_rmse.items()}
     total = sum(inverse.values())
     weights = {name: value / total for name, value in inverse.items()}
     active = list(weights)
     print(f"[Part3] Active sleeves: {active}")
     print(f"[Part3] Fusion weights: {weights}")
     return weights, active
+
+
+def qualified_sleeve_evidence(root: Path, cfg: Part3Config, summaries: Dict) -> Tuple[Dict, Dict]:
+    """Hash-check scored tapes and clocks before accepting optional gates."""
+    qualified = {key: dict(value) if value else None for key, value in summaries.items()}
+    core_path = root / cfg.part2_dir_name / "gas_oof_predictions.csv"
+    core = qualified.get("part2") or {}
+    if core.get("oof_sha256") != sha256_file(core_path):
+        raise ValueError("Core OOF evidence hash does not match its summary")
+    frames = {"part2": pd.read_csv(core_path)}
+    frames["part2"]["pred_part2"] = frames["part2"]["pred_ensemble"]
+    if not aligned_oof(frames["part2"], frames["part2"]):
+        raise ValueError("Invalid core OOF dates or paired observations")
+    # Recompute the gate from evidence, rather than trust a boolean flag.
+    qualified["part2"]["operator_validation"] = candidate_gate(frames["part2"], "pred_part2")
+    qualified["part2"].setdefault("val_metrics", {})["ensemble_rmse"] = qualified["part2"]["operator_validation"].get("ensemble_rmse")
+    features_hash = sha256_file(root / "artifacts_part1/gas_feature_matrix.parquet")
+    for name, folder, tape_name, oof_name, pred_name, gate in [
+        ("part2b", cfg.part2b_dir_name, "gas_xgb_tape.parquet", "gas_xgb_oof.csv", "pred_xgb_ensemble", "xgb_sleeve_recommended"),
+        ("part2a", cfg.part2a_dir_name, "gas_lstm_tape.parquet", "gas_lstm_oof.csv", "pred_lstm", "lstm_sleeve_recommended"),
+    ]:
+        summary = qualified.get(name)
+        if not summary or not summary.get(gate):
+            continue
+        try:
+            directory = root / folder
+            latest = summary.get("latest_forecast", {})
+            valid = (
+                summary.get("validation_protocol") == NESTED_PROTOCOL
+                and str(summary.get("pipeline_run_id")) == str(core.get("pipeline_run_id"))
+                and summary.get("feature_matrix_sha256") == features_hash
+                and summary.get("oof_sha256") == sha256_file(directory / oof_name)
+                and summary.get("forecast_tape_sha256") == sha256_file(directory / tape_name)
+                and latest.get("anchor_week") == core.get("forecast_anchor_week")
+                and latest.get("target_week") == core.get("forecast_target_week")
+                and latest.get("is_true_live_forecast") is True
+            )
+            scored = pd.read_csv(directory / oof_name)
+            tape = pd.read_parquet(directory / tape_name)
+            valid = valid and not tape["week_date"].duplicated().any()
+            live = tape.loc[pd.to_datetime(tape["week_date"]).eq(pd.Timestamp(core["forecast_anchor_week"]))]
+            valid = valid and len(live) == 1 and int(live.iloc[0].get("is_live", 0)) == 1
+            valid = valid and np.isfinite(float(live.iloc[0][pred_name]))
+            valid = valid and aligned_oof(frames["part2"], scored)
+            valid = valid and candidate_gate(scored, pred_name)["operator_validated"]
+            actual_rmse = float(np.sqrt(np.mean((scored["actual"] - scored[pred_name]) ** 2)))
+            valid = valid and actual_rmse < qualified["part2"]["val_metrics"]["ensemble_rmse"]
+            if not valid:
+                raise ValueError("unqualified optional evidence")
+            scored[f"pred_{name}"] = scored[pred_name]
+            summary["xgb_val_rmse" if name == "part2b" else "lstm_val_rmse"] = actual_rmse
+            frames[name] = scored
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            print(f"[Part3] {name} excluded: {exc}")
+            summary[gate] = False
+    return qualified, frames
+
+
+def governed_fusion_weights(summaries: Dict, frames: Dict) -> Tuple[Dict, List[str], pd.DataFrame, Dict]:
+    """Score the actual fusion rule and fall back to the validated core."""
+    weights, active = determine_active_sleeves(summaries)
+    oof = frames["part2"][["week_date", "actual", "pred_persistence", "fold", "pred_part2"]].copy()
+    for name in active:
+        if name != "part2":
+            oof[f"pred_{name}"] = frames[name][f"pred_{name}"].to_numpy()
+    scored = prequential_fusion(oof, [f"pred_{name}" for name in active])
+    validation = candidate_gate(scored, "pred_fusion")
+    if len(active) > 1 and not validation["operator_validated"]:
+        print("[Part3] Fused candidate failed its paired gate; retaining core only.")
+        weights, active = {"part2": 1.0}, ["part2"]
+        scored = prequential_fusion(oof, ["pred_part2"])
+        validation = candidate_gate(scored, "pred_fusion")
+    return weights, active, scored, validation
 
 
 # ── Prediction column resolver ─────────────────────────────────────────────────
@@ -491,6 +566,7 @@ def write_part3_summary(
     weights: Dict[str, float],
     active_sleeves: List[str],
     predlog_len: int,
+    fusion_validation: Optional[Dict] = None,
 ) -> None:
     summary = {
         "script_version": SCRIPT_VERSION,
@@ -523,6 +599,8 @@ def write_part3_summary(
         "prediction_log_rows": predlog_len,
         "operator_validated": bool(new_row.get("operator_validated", 0)),
         "publication_mode": str(new_row.get("publication_mode", "FAIL_CLOSED")),
+        "fusion_operator_validation": fusion_validation or {},
+        "fusion_oof_sha256": sha256_file(out_dir / "gas_fusion_oof.csv"),
         **pipeline_identity(),
     }
     path = out_dir / "gas_part3_summary.json"
@@ -588,8 +666,13 @@ def main() -> int:
         print("[Part3] FATAL: Part2 forecast tape not found. Run gas_part2 first.")
         return 1
 
-    # Determine active sleeves and weights
-    weights, active_sleeves = determine_active_sleeves(summaries)
+    try:
+        summaries, frames = qualified_sleeve_evidence(root, cfg, summaries)
+        weights, active_sleeves, fusion_oof, fusion_validation = governed_fusion_weights(summaries, frames)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"[Part3] FATAL: OOF evidence validation failed: {exc}")
+        return 1
+    fusion_oof.to_csv(out_dir / "gas_fusion_oof.csv", index=False)
 
     # Fuse forecasts
     fusion_df = fuse_forecasts(tapes, weights, active_sleeves)
@@ -600,7 +683,8 @@ def main() -> int:
     core_validation = (summaries.get("part2") or {}).get(
         "operator_validation", {}
     )
-    operator_validated = bool(core_validation.get("operator_validated", False))
+    operator_validated = bool(core_validation.get("operator_validated", False)
+                              and fusion_validation.get("operator_validated", False))
     fusion_df["pred_candidate"] = fusion_df["pred_fusion"]
     fusion_df["operator_validated"] = operator_validated
     if operator_validated:
@@ -654,7 +738,7 @@ def main() -> int:
     )
     published_row = df_log.loc[target_mask].iloc[0]
     write_part3_summary(
-        out_dir, published_row, weights, active_sleeves, len(df_log)
+        out_dir, published_row, weights, active_sleeves, len(df_log), fusion_validation
     )
     strict_json_dump(
         {

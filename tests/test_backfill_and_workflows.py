@@ -19,6 +19,10 @@ def _ledger_row(**overrides):
         "pred_fusion": 4.0,
         "pred_persistence": 3.9,
         "actual": np.nan,
+        "schema_version": "V2_RELEASE_LEDGER",
+        "run_utc": "2026-09-08T19:00:00+00:00",
+        "pipeline_run_id": "test-run",
+        "source_code_sha": "a" * 40,
     }
     row.update(overrides)
     return row

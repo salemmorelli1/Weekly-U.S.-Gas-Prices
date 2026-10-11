@@ -12,9 +12,21 @@ permissions:
 
 jobs:
   causal-controls:
-    name: Compile, lint, and test
-    runs-on: ubuntu-latest
+    name: CPU pipeline verification (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
     steps:
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -26,10 +38,13 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-ci-lock.txt
 
-      - name: Install locked CI dependencies
+      - name: Install the tested CPU dependencies
         run: |
           set -euo pipefail
+          python -m pip install --disable-pip-version-check torch==2.14.1+cpu --index-url https://download.pytorch.org/whl/cpu
           python -m pip install --disable-pip-version-check -r requirements-ci-lock.txt
+          python -m pip check
+          python -c "import torch, xgboost; assert torch.version.cuda is None; print('CPU model dependencies available')"
 
       - name: Compile every tracked Python file
         run: |
@@ -41,10 +56,11 @@ jobs:
           set -euo pipefail
           python -m ruff check --select E9,F63,F7,F82 .
 
-      - name: Run regression suite
+      - name: Run regression and disposable pipeline tests
         run: |
           set -euo pipefail
           python -m pytest -q
+          python gas_release_manifest.py verify
 
       - name: Parse workflow YAML
         run: |
@@ -52,11 +68,15 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import yaml
-
           for path in sorted(Path(".github/workflows").glob("*.yml")):
-              with path.open(encoding="utf-8") as handle:
-                  value = yaml.safe_load(handle)
+              value = yaml.safe_load(path.read_text(encoding="utf-8"))
               if not isinstance(value, dict):
                   raise ValueError(f"workflow is not a mapping: {path}")
               print(f"parsed: {path}")
           PY
+
+      - name: Verify published forecasts remained unchanged
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --exit-code
