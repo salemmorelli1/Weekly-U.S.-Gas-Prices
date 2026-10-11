@@ -29,6 +29,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -98,8 +99,13 @@ except Exception:
     HAVE_REQUESTS = False
 
 # EIA FRED series for U.S. average regular gas price
-EIA_FRED_SERIES = "GASREGCOVW"   # Weekly, Monday, $/gal
-EIA_API_SERIES  = "PET.EMD_EPD2D_PTE_NUS_DPG.W"
+from gas_source_contract import (
+    EIA_TARGET_SERIES, FRED_TARGET_SERIES, OBSERVATION_CONTRACT, eia_price_records, observed_monday_prices,
+)
+from gas_time_contract import sha256_file
+
+EIA_FRED_SERIES = FRED_TARGET_SERIES
+EIA_API_SERIES = EIA_TARGET_SERIES
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -135,7 +141,7 @@ def fetch_gas_history_fred(start: str, end: str) -> pd.Series:
     try:
         fred = Fred(api_key=key)
         raw = fred.get_series(EIA_FRED_SERIES, observation_start=start, observation_end=end)
-        raw.index = pd.to_datetime(raw.index).normalize()
+        raw = observed_monday_prices(raw)
         print(f"[Backfill] FRED: {len(raw)} weekly gas price obs "
               f"({raw.index.min().date()} -> {raw.index.max().date()})")
         return raw
@@ -171,24 +177,7 @@ def fetch_gas_history_eia_api(start: str, end: str) -> pd.Series:
         if not rows:
             return pd.Series(dtype=float)
 
-        records = []
-        for row in rows:
-            period = row.get("period", "")
-            value  = row.get("value", None)
-            if period and value is not None:
-                try:
-                    records.append((pd.to_datetime(period).normalize(), float(value)))
-                except (ValueError, TypeError):
-                    pass
-
-        if not records:
-            return pd.Series(dtype=float)
-
-        idx, vals = zip(*records)
-        s = pd.Series(vals, index=pd.DatetimeIndex(idx))
-        s = s.sort_index()
-        print(f"[Backfill] EIA API: {len(s)} weekly gas price obs")
-        return s
+        return eia_price_records(rows, EIA_API_SERIES)
     except Exception as e:
         print(f"[Backfill] EIA API fetch failed: {e}")
         return pd.Series(dtype=float)
@@ -200,13 +189,31 @@ def fetch_gas_history_master(start: str, end: str) -> pd.Series:
     A non-empty local parquet must not prevent an API refresh: that was the
     reason matured rows remained unfilled while workflows still passed.
     """
-    authoritative = fetch_gas_history_fred(start, end)
+    authoritative = observed_monday_prices(fetch_gas_history_fred(start, end)).dropna()
     if authoritative.empty:
-        authoritative = fetch_gas_history_eia_api(start, end)
+        authoritative = observed_monday_prices(fetch_gas_history_eia_api(start, end)).dropna()
 
     local = pd.Series(dtype=float)
     master_path = PROJECT_DIR / "artifacts_part0" / "gas_weekly_master.parquet"
+    # Older masters may contain forward-filled prices. Only a hash-verified
+    # exact-observation producer can supply an otherwise unavailable outcome.
+    verified_local = False
     if master_path.exists():
+        try:
+            part0 = json.loads((master_path.parent / "part0_summary.json").read_text(encoding="utf-8"))
+            producer = part0
+            part0c_path = master_path.parent / "part0c_summary.json"
+            if part0c_path.exists():
+                part0c = json.loads(part0c_path.read_text(encoding="utf-8"))
+                if part0c.get("pipeline_run_id") == part0.get("pipeline_run_id"):
+                    producer = part0c
+            verified_local = (
+                part0.get("price_observation_contract") == OBSERVATION_CONTRACT
+                and producer.get("master_parquet_sha256") == sha256_file(master_path)
+            )
+        except (OSError, ValueError, TypeError):
+            pass
+    if verified_local:
         try:
             frame = pd.read_parquet(
                 master_path, columns=["week_date", "gas_us_avg"]
@@ -214,11 +221,10 @@ def fetch_gas_history_master(start: str, end: str) -> pd.Series:
             frame["week_date"] = pd.to_datetime(
                 frame["week_date"], errors="coerce"
             ).dt.normalize()
-            local = (
+            local = observed_monday_prices(
                 frame.dropna(subset=["week_date", "gas_us_avg"])
                 .set_index("week_date")["gas_us_avg"]
                 .astype(float)
-                .sort_index()
             )
             lower, upper = pd.to_datetime(start), pd.to_datetime(end)
             local = local[(local.index >= lower) & (local.index <= upper)]
@@ -271,7 +277,7 @@ def backfill(
     price_map: Dict[pd.Timestamp, float] = {
         idx.normalize(): float(val)
         for idx, val in price_history.items()
-        if np.isfinite(float(val))
+        if np.isfinite(float(val)) and float(val) > 0
     }
 
     matured_count = 0
@@ -326,8 +332,8 @@ def backfill(
                 df.at[idx, "mape"] = round(abs_err / abs(realized_price) * 100, 4)
 
         # Direction accuracy vs the prior EIA week's realized price
-        prior_price = _lookup_price(price_map, target_date - pd.Timedelta(days=7))
-        if prior_price is not None and np.isfinite(pred_fusion):
+        prior_price = _safe_float(row.get("pred_persistence"))
+        if np.isfinite(prior_price) and np.isfinite(pred_fusion):
             true_dir = np.sign(realized_price - prior_price)
             pred_dir = np.sign(pred_fusion - prior_price)
             df.at[idx, "direction_correct"] = float(int(true_dir == pred_dir))

@@ -661,6 +661,8 @@ def write_part2_summary(
         "forecast_tape_sha256": sha256_file(
             out_dir / "gas_forecast_tape.parquet"
         ),
+        "oof_sha256": sha256_file(out_dir / "gas_oof_predictions.csv"),
+        "validation_protocol": "EXPANDING_BLOCKED_OOF_V1",
         **pipeline_identity(),
         "config": {
             "val_weeks": cfg.val_weeks,

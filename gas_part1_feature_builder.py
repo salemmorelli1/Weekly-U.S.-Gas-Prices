@@ -145,13 +145,13 @@ def add_lag_features(df: pd.DataFrame, col: str, windows: Tuple[int, ...]) -> pd
     """Add lagged level and return features for a given column."""
     for w in windows:
         df[f"{col}_lag_{w}w"] = df[col].shift(w)
-        df[f"{col}_ret_{w}w"] = df[col].pct_change(w).shift(1)
+        df[f"{col}_ret_{w}w"] = df[col].pct_change(w, fill_method=None).shift(1)
     return df
 
 
 def add_volatility_features(df: pd.DataFrame, col: str, windows: Tuple[int, ...]) -> pd.DataFrame:
     """Rolling realized volatility (std of weekly returns)."""
-    ret = df[col].pct_change(1).shift(1)
+    ret = df[col].pct_change(1, fill_method=None).shift(1)
     for w in windows:
         # FIX (Audit 2026-08): min_periods must never exceed the window —
         # max(2, w // 2) raised ValueError for w=1 windows. std() needs >= 2
@@ -250,19 +250,19 @@ def add_macro_features(df: pd.DataFrame) -> pd.DataFrame:
         df["treasury_level"]  = df["treasury_10y"].shift(1)
 
     if "usd_index" in df.columns:
-        df["usd_ret_4w"]  = df["usd_index"].pct_change(4).shift(1)
-        df["usd_ret_12w"] = df["usd_index"].pct_change(12).shift(1)
+        df["usd_ret_4w"]  = df["usd_index"].pct_change(4, fill_method=None).shift(1)
+        df["usd_ret_12w"] = df["usd_index"].pct_change(12, fill_method=None).shift(1)
         df["usd_z_26w"] = (
             (df["usd_index"].shift(1) - df["usd_index"].shift(1).rolling(26, min_periods=8).mean())
             / df["usd_index"].shift(1).rolling(26, min_periods=8).std().replace(0, np.nan)
         )
 
     if "sp500" in df.columns:
-        df["sp500_ret_4w"]  = df["sp500"].pct_change(4).shift(1)
-        df["sp500_vol_8w"]  = df["sp500"].pct_change(1).shift(1).rolling(8, min_periods=4).std()
+        df["sp500_ret_4w"]  = df["sp500"].pct_change(4, fill_method=None).shift(1)
+        df["sp500_vol_8w"]  = df["sp500"].pct_change(1, fill_method=None).shift(1).rolling(8, min_periods=4).std()
 
     if "energy_xle" in df.columns:
-        df["xle_ret_4w"] = df["energy_xle"].pct_change(4).shift(1)
+        df["xle_ret_4w"] = df["energy_xle"].pct_change(4, fill_method=None).shift(1)
 
     return df
 
@@ -293,7 +293,7 @@ def add_regime_features(df: pd.DataFrame, regime_tape: Optional[pd.DataFrame]) -
 def add_eia_ratio_features(df: pd.DataFrame) -> pd.DataFrame:
     """EIA-derived ratio features."""
     if "eia_gas_stocks_total" in df.columns and "eia_gas_demand" in df.columns:
-        daily_demand = df["eia_gas_demand"] / 7.0
+        daily_demand = df["eia_gas_demand"]
         df["eia_days_supply"] = (
             df["eia_gas_stocks_total"].shift(1) / daily_demand.shift(1).replace(0, np.nan)
         )
@@ -318,7 +318,13 @@ def build_target(df: pd.DataFrame, cfg: Part1Config) -> pd.Series:
         print("[Part1] WARN: gas_us_avg not found — target will be empty.")
         return pd.Series(dtype=float, name="target_gas_price")
 
-    target = df["gas_us_avg"].shift(-cfg.horizon_weeks)
+    dates = pd.to_datetime(df["week_date"], errors="coerce").dt.normalize()
+    if dates.isna().any() or dates.duplicated().any() or dates.dt.dayofweek.ne(0).any():
+        raise ValueError("Targets require unique exact Monday observation dates")
+    prices = pd.to_numeric(df["gas_us_avg"], errors="coerce")
+    lookup = pd.Series(prices.where(np.isfinite(prices) & prices.gt(0)).values, index=dates)
+    targets = dates + pd.Timedelta(weeks=cfg.horizon_weeks)
+    target = pd.Series(targets.map(lookup).values, index=df.index)
     target.name = "target_gas_price"
     return target
 
@@ -337,6 +343,11 @@ def build_feature_matrix(
     df = master_df.copy()
     df["week_date"] = pd.to_datetime(df["week_date"])
     df = df.sort_values("week_date").reset_index(drop=True)
+    if df["week_date"].isna().any() or df["week_date"].duplicated().any() or df["week_date"].dt.dayofweek.ne(0).any():
+        raise ValueError("Feature history requires unique Monday dates")
+    # Row lags and rolling windows now correspond to actual calendar weeks.
+    calendar = pd.date_range(df["week_date"].min(), df["week_date"].max(), freq="W-MON")
+    df = df.set_index("week_date").reindex(calendar).rename_axis("week_date").reset_index()
 
     # The release observation itself is known at decision time and is the
     # mandatory same-window persistence comparator.
@@ -393,7 +404,7 @@ def build_feature_matrix(
     exclude_cols = {
         "gas_us_avg", "wti_crude", "rbob_gasoline", "natural_gas",
         "brent_etf", "uso_etf", "ung_etf", "usd_index", "treasury_10y",
-        "sp500", "energy_xle", "gas_midwest", "gas_gulf", "gas_east", "gas_west",
+        "sp500", "energy_xle", "gas_midwest", "gas_us_midgrade_conventional", "gas_gulf", "gas_east", "gas_west",
         "crude_wti", "crude_brent", "gas_stocks", "gas_demand", "crude_stocks",
         "cpi_energy", "cpi_gasoline", "unemployment", "gdp_growth",
         "eia_gas_us_regular", "eia_gas_us_midgrade", "eia_gas_us_premium",
@@ -435,19 +446,17 @@ def build_feature_matrix(
     #   - Downstream sleeves train on is_live=0 rows only and predict the
     #     last is_live row for the true next-week forecast.
     target_notna = X_df["target_gas_price"].notna().values
-    if target_notna.any():
-        last_labeled_pos = int(np.max(np.where(target_notna)[0]))
-    else:
-        last_labeled_pos = -1
-
     is_live = np.zeros(len(X_df), dtype=int)
-    is_live[last_labeled_pos + 1:] = 1  # everything after the last labeled row
+    observed = np.isfinite(df["gas_us_avg_current"]) & df["gas_us_avg_current"].gt(0)
+    if observed.any():
+        last_observed_pos = int(np.flatnonzero(observed)[-1])
+        is_live[last_observed_pos] = int(not target_notna[last_observed_pos])
 
     interior_nan = (~target_notna) & (is_live == 0)
     n_dropped = int(interior_nan.sum())
     if n_dropped:
         print(f"[Part1] Dropped {n_dropped} interior rows with missing targets")
-    keep_mask = ~interior_nan
+    keep_mask = (~interior_nan) & observed.to_numpy()
     X_df = X_df.loc[keep_mask].reset_index(drop=True)
     is_live = is_live[keep_mask]
 

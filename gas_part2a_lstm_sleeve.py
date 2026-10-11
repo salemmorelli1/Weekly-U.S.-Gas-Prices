@@ -63,18 +63,19 @@ def _colab_init(extra_packages=None):
 _colab_init(extra_packages=["torch", "scikit-learn", "pyarrow"])
 
 import json, os, warnings
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.preprocessing import StandardScaler
 
-from gas_time_contract import pipeline_identity, strict_json_dump
+from gas_time_contract import pipeline_identity, sha256_file, strict_json_dump
+from gas_validation import NESTED_PROTOCOL, aligned_oof, blocked_folds, candidate_gate
+from gas_part2_forecaster import validate_feature_lineage
 
 warnings.filterwarnings("ignore")
 
@@ -90,7 +91,7 @@ except ImportError:
     print("[Part2a] PyTorch not installed. Install: pip install torch")
     print("[Part2a] Uncomment 'torch' in requirements.txt to enable LSTM sleeve.")
 
-SCRIPT_VERSION = "GAS_PART2A_LSTM_V2_FAIL_CLOSED"
+SCRIPT_VERSION = "GAS_PART2A_LSTM_V3_NESTED_OOF"
 
 
 @dataclass
@@ -343,7 +344,9 @@ def part2b_gate_passed(part2b_dir: Path) -> Tuple[bool, str]:
             s = json.load(f)
     except Exception as exc:
         return False, f"could not parse {summary_path}: {exc}"
-    rec = bool(s.get("xgb_sleeve_recommended", False))
+    rec = bool(s.get("xgb_sleeve_recommended", False)
+               and s.get("validation_protocol") == NESTED_PROTOCOL
+               and str(s.get("pipeline_run_id")) == pipeline_identity()["pipeline_run_id"])
     return rec, f"xgb_sleeve_recommended={rec} (source={summary_path})"
 
 
@@ -371,259 +374,164 @@ def get_feature_cols(X: pd.DataFrame) -> List[str]:
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+def _new_model(n_features: int, cfg: Part2aConfig):
+    return GasPriceLSTM(n_features, cfg.lstm_hidden_size_1, cfg.lstm_hidden_size_2,
+                        cfg.dense_hidden_size, cfg.dropout_rate)
+
+
+def _scaled_history(values: np.ndarray, actual: np.ndarray):
+    imputer = SimpleImputer(strategy="median", keep_empty_features=True)
+    scaler = StandardScaler()
+    scaled = scaler.fit_transform(imputer.fit_transform(values))
+    mean, std = float(np.mean(actual)), float(np.std(actual)) + 1e-8
+    return scaled, (actual - mean) / std, (imputer, scaler, mean, std)
+
+
+def _fixed_lstm_fit(values: np.ndarray, actual: np.ndarray, epochs: int, cfg: Part2aConfig):
+    """Refit only on labels available at this forecast origin."""
+    torch.manual_seed(cfg.seed)
+    scaled, target, bundle = _scaled_history(values, actual)
+    sequences, targets = build_sequences(scaled, target, cfg.sequence_length)
+    if not len(targets):
+        raise ValueError("Insufficient LSTM training sequences")
+    loader = DataLoader(TensorDataset(torch.tensor(sequences), torch.tensor(targets)),
+                        batch_size=cfg.batch_size, shuffle=False)
+    model = _new_model(values.shape[1], cfg).to(cfg.device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
+    criterion = nn.HuberLoss(delta=.1)
+    model.train()
+    for _ in range(epochs):
+        for inputs, outcomes in loader:
+            optimizer.zero_grad()
+            loss = criterion(model(inputs.to(cfg.device)), outcomes.to(cfg.device))
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.)
+            optimizer.step()
+    return model, bundle
+
+
+def _lstm_predict(model, bundle, values: np.ndarray, positions: np.ndarray, cfg: Part2aConfig):
+    imputer, scaler, mean, std = bundle
+    scaled = scaler.transform(imputer.transform(values))
+    inputs = np.array([scaled[i-cfg.sequence_length+1:i+1] for i in positions], dtype=np.float32)
+    if inputs.ndim != 3 or inputs.shape[1] != cfg.sequence_length:
+        raise ValueError("Incomplete LSTM prediction window")
+    model.eval()
+    predictions = []
+    with torch.no_grad():
+        for start in range(0, len(inputs), cfg.batch_size):
+            batch = torch.tensor(inputs[start:start+cfg.batch_size]).to(cfg.device)
+            predictions.extend(model(batch).cpu().numpy().tolist())
+    return np.asarray(predictions) * std + mean
+
+
+def nested_lstm_forecasts(X: pd.DataFrame, y: pd.Series, cfg: Part2aConfig):
+    """Choose epoch counts on inner history; score later untouched blocks."""
+    values = X[get_feature_cols(X)].replace([np.inf, -np.inf], np.nan).to_numpy()
+    actual = pd.to_numeric(y).to_numpy(dtype=float)
+    dates = pd.to_datetime(X["week_date"])
+    if not dates.diff().dropna().eq(pd.Timedelta(days=7)).all():
+        raise ValueError("LSTM requires consecutive calendar-week observations")
+    start, folds = blocked_folds(len(actual), cfg.val_weeks)
+    predictions = np.full(len(actual) - start, np.nan)
+    fold_ids = np.zeros(len(predictions), dtype=int)
+    epoch_counts = []
+    for fold_id, positions in enumerate(folds, start=1):
+        stop = int(positions[0])
+        inner_len = min(cfg.val_weeks, max(8, stop // 5))
+        inner_stop = stop - inner_len
+        if inner_stop - cfg.sequence_length + 1 < 8:
+            raise ValueError("Insufficient inner LSTM history")
+        scaled, inner_targets, bundle = _scaled_history(values[:inner_stop], actual[:inner_stop])
+        imputer, scaler, mean, std = bundle
+        entire = scaler.transform(imputer.transform(values[:stop]))
+        target = (actual[:stop] - mean) / std
+        sequences, targets = build_sequences(entire, target, cfg.sequence_length)
+        cutoff = inner_stop - cfg.sequence_length + 1
+        loaders = [DataLoader(TensorDataset(torch.tensor(sequences[a:b]), torch.tensor(targets[a:b])),
+                              batch_size=cfg.batch_size, shuffle=False)
+                   for a, b in [(0, cutoff), (cutoff, len(targets))]]
+        torch.manual_seed(cfg.seed)
+        tuned, _, losses = train_lstm(_new_model(values.shape[1], cfg), *loaders, cfg, cfg.device)
+        del tuned
+        epochs = int(np.argmin(losses)) + 1
+        epoch_counts.append(epochs)
+        model, bundle = _fixed_lstm_fit(values[:stop], actual[:stop], epochs, cfg)
+        predictions[positions - start] = _lstm_predict(model, bundle, values, positions, cfg)
+        fold_ids[positions - start] = fold_id
+    final_epochs = max(1, int(np.median(epoch_counts)))
+    model, bundle = _fixed_lstm_fit(values, actual, final_epochs, cfg)
+    oof = pd.DataFrame({"week_date": dates.iloc[start:].to_numpy(), "actual": actual[start:],
+                        "pred_persistence": X["gas_us_avg_current"].iloc[start:].to_numpy(),
+                        "pred_lstm": predictions, "fold": fold_ids})
+    return model, bundle, oof, epoch_counts
+
+
 def main() -> int:
     cfg = Part2aConfig()
     root = resolve_project_root(cfg)
     out_dir = root / cfg.out_dir_name
     out_dir.mkdir(parents=True, exist_ok=True)
-    part1_dir  = root / cfg.part1_dir_name
-    part2_dir  = root / cfg.part2_dir_name
-    part2b_dir = root / cfg.part2b_dir_name
-
     os.environ.setdefault("GASPRICE_ROOT", str(root))
-    print(f"[Part2a] ROOT: {root}")
-    print(f"[Part2a] Version: {SCRIPT_VERSION}")
-    print(f"[Part2a] Device: {cfg.device}\n")
-
+    identity = pipeline_identity()
+    def unavailable(reason):
+        strict_json_dump({"script_version": SCRIPT_VERSION, "run_utc": datetime.now(timezone.utc).isoformat(),
+                          "lstm_sleeve_recommended": False, "reason": reason, **identity},
+                         out_dir / "gas_part2a_summary.json")
+        return 0
     if not HAVE_TORCH:
-        print("[Part2a] PyTorch not available. LSTM sleeve skipped.")
-        summary = {
-            "script_version": SCRIPT_VERSION,
-            "run_utc": datetime.now(timezone.utc).isoformat(),
-            "lstm_sleeve_recommended": False,
-            "reason": "torch_not_installed",
-            **pipeline_identity(),
-        }
-        strict_json_dump(summary, out_dir / "gas_part2a_summary.json")
-        return 0
-
-    # ── Part 2b activation gate (fail-closed) ──────────────────────────────
-    gate_ok, gate_reason = part2b_gate_passed(part2b_dir)
-    if not gate_ok:
-        print(f"[Part2a] LSTM sleeve SKIPPED — Part 2b gate not passed ({gate_reason}).")
-        summary = {
-            "script_version": SCRIPT_VERSION,
-            "run_utc": datetime.now(timezone.utc).isoformat(),
-            "lstm_sleeve_recommended": False,
-            "reason": "part2b_gate_not_passed",
-            "gate_detail": gate_reason,
-            **pipeline_identity(),
-        }
-        strict_json_dump(summary, out_dir / "gas_part2a_summary.json")
-        return 0
-    print(f"[Part2a] Part 2b activation gate passed ({gate_reason}).")
-
-    torch.manual_seed(cfg.seed)
-    np.random.seed(cfg.seed)
-
-    # Load features
+        return unavailable("torch_not_installed")
+    gate, reason = part2b_gate_passed(root / cfg.part2b_dir_name)
+    if not gate:
+        return unavailable("part2b_gate_not_passed: " + reason)
+    part1_dir = root / cfg.part1_dir_name
+    validate_feature_lineage(part1_dir)
+    X, y = load_features(part1_dir)
+    n_lab = int((X["is_live"].eq(0) & y.notna()).sum())
     try:
-        X, y = load_features(part1_dir)
-    except FileNotFoundError as e:
-        print(f"[Part2a] FATAL: {e}")
-        return 1
-
-    feature_cols = get_feature_cols(X)
-    n_total = len(X)
-    is_live = X["is_live"].values.astype(int)
-    n_live  = int(is_live.sum())
-    n_lab   = n_total - n_live
-    print(f"[Part2a] Features: {n_lab} labeled + {n_live} live rows x "
-          f"{len(feature_cols)} features")
-
-    seq_len = cfg.sequence_length
-    val_len = min(cfg.val_weeks, max(1, int(n_lab * 0.25)))
-    train_end_t = n_lab - val_len   # first validation TARGET index
-
-    # FIX (Audit 2026-08): imputer / scaler / target-scaling stats were
-    # previously fit on the FULL matrix (train + val + live), leaking
-    # validation-window information into preprocessing. All stats now come
-    # from training rows only (targets before the common gate window).
-    imputer = SimpleImputer(strategy="median", keep_empty_features=True)
-    scaler  = StandardScaler()
-    imputer.fit(X[feature_cols].values[:train_end_t])
-    scaler.fit(imputer.transform(X[feature_cols].values[:train_end_t]))
-    X_scaled = scaler.transform(imputer.transform(X[feature_cols].values))
-
-    y_arr  = y.values.astype(np.float32)
-    y_tr_stats = y_arr[:train_end_t]
-    y_mean = float(np.nanmean(y_tr_stats))
-    y_std  = float(np.nanstd(y_tr_stats))
-    y_scaled = (y_arr - y_mean) / (y_std + 1e-8)
-
-    # Build sequences over ALL rows (labeled + live). y_seq[i] targets row
-    # i + seq_len; live targets are NaN and are excluded from train/val.
-    X_seq, y_seq = build_sequences(X_scaled, y_scaled, seq_len)
-    dates = X["week_date"].values[seq_len - 1:]
-    target_is_live = is_live[seq_len - 1:]
-
-    n_seq = len(y_seq)
-    # Sequence i targets row t = i + seq_len - 1  =>  i = t - seq_len + 1
-    train_end_s = max(0, train_end_t - seq_len + 1)      # targets < train_end_t
-    val_end_s   = max(train_end_s, n_lab - seq_len + 1)  # labeled targets only
-
-    X_tr, y_tr   = X_seq[:train_end_s], y_seq[:train_end_s]
-    X_val, y_val = X_seq[train_end_s:val_end_s], y_seq[train_end_s:val_end_s]
-
-    if len(X_tr) < 30 or len(X_val) < 8:
-        print(f"[Part2a] FATAL: Not enough sequences (train={len(X_tr)}, "
-              f"val={len(X_val)}). Need more weekly history.")
-        summary = {
-            "script_version": SCRIPT_VERSION,
-            "run_utc": datetime.now(timezone.utc).isoformat(),
-            "lstm_sleeve_recommended": False,
-            "reason": "insufficient_history",
-            **pipeline_identity(),
-        }
-        strict_json_dump(summary, out_dir / "gas_part2a_summary.json")
-        return 0
-
-    print(f"[Part2a] Sequences: total={n_seq} | train={len(X_tr)} | "
-          f"val={len(X_val)} (common gate window: last {val_len} labeled weeks) | "
-          f"live={int(target_is_live.sum())}")
-
-    # DataLoaders
-    train_ds = TensorDataset(
-        torch.tensor(X_tr, dtype=torch.float32),
-        torch.tensor(y_tr, dtype=torch.float32),
-    )
-    val_ds = TensorDataset(
-        torch.tensor(X_val, dtype=torch.float32),
-        torch.tensor(y_val, dtype=torch.float32),
-    )
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=False)
-    val_loader   = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False)
-
-    # Build model
-    n_features = X_scaled.shape[1]
-    model = GasPriceLSTM(
-        n_features=n_features,
-        hidden_size_1=cfg.lstm_hidden_size_1,
-        hidden_size_2=cfg.lstm_hidden_size_2,
-        dense_size=cfg.dense_hidden_size,
-        dropout=cfg.dropout_rate,
-    )
-    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"[Part2a] LSTM parameters: {n_params:,}")
-
-    # Train
-    print(f"\n[Part2a] Training LSTM ({cfg.epochs} epochs max, "
-          f"patience={cfg.patience})...")
-    model, train_losses, val_losses = train_lstm(model, train_loader, val_loader, cfg, cfg.device)
-
-    # Evaluate on validation set
-    model.eval()
-    device = cfg.device
-    with torch.no_grad():
-        X_val_t = torch.tensor(X_val, dtype=torch.float32).to(device)
-        val_pred_scaled = model(X_val_t).cpu().numpy()
-
-    # Rescale predictions and actuals
-    val_pred  = val_pred_scaled * y_std + y_mean
-    val_actuals = y_val * y_std + y_mean
-
-    lstm_rmse = float(np.sqrt(mean_squared_error(val_actuals, val_pred)))
-    lstm_mae  = float(mean_absolute_error(val_actuals, val_pred))
-    lstm_mape = float(np.mean(np.abs((val_actuals - val_pred) /
-                                      np.where(val_actuals != 0, val_actuals, np.nan)))) * 100
-    print(f"[Part2a] LSTM val RMSE: {lstm_rmse:.4f} | MAE: {lstm_mae:.4f} | MAPE: {lstm_mape:.2f}%")
-
-    # Gate check — FIX (Audit 2026-08): missing baselines previously left the
-    # default recommended=True in place. An optional experimental sleeve must
-    # fail CLOSED: both baselines are required, and the LSTM must beat both.
-    base_rmse, xgb_rmse = load_baseline_rmse(part2_dir, part2b_dir)
-    if base_rmse is None or xgb_rmse is None:
-        recommended = False
-        print(f"[Part2a] Gate FAILS CLOSED — missing baseline(s): "
-              f"base_rmse={base_rmse}, xgb_rmse={xgb_rmse}")
-    else:
-        recommended = (lstm_rmse < base_rmse) and (lstm_rmse < xgb_rmse)
-        print(f"[Part2a] LSTM vs Base: {lstm_rmse:.4f} < {base_rmse:.4f} "
-              f"-> {lstm_rmse < base_rmse}")
-        print(f"[Part2a] LSTM vs XGB:  {lstm_rmse:.4f} < {xgb_rmse:.4f} "
-              f"-> {lstm_rmse < xgb_rmse}")
-
-    # Full prediction tape
-    model.eval()
-    all_preds_scaled = []
-    with torch.no_grad():
-        for i in range(0, len(X_seq), cfg.batch_size):
-            Xb = torch.tensor(X_seq[i : i + cfg.batch_size], dtype=torch.float32).to(device)
-            preds = model(Xb).cpu().numpy()
-            all_preds_scaled.extend(preds.tolist())
-
-    all_preds = np.array(all_preds_scaled) * y_std + y_mean
-
-    tape = pd.DataFrame({
-        "week_date": pd.to_datetime(dates),
-        "actual": y_arr[seq_len - 1:],   # NaN for live targets by construction
-        "pred_lstm": all_preds,
-        "is_live": target_is_live,
-    })
-
-    # Live next-week forecast (last sequence ends at the live row when present)
-    latest_pred = float(all_preds[-1])
-    latest_week = pd.to_datetime(dates[-1])
-    target_week = latest_week + pd.Timedelta(weeks=1)
-    live_tag = "LIVE" if n_live else "RETROSPECTIVE"
-    print(f"[Part2a] {live_tag} forecast — anchored {latest_week.date()}, "
-          f"targeting week of {target_week.date()}: ${latest_pred:.3f}/gal")
-
-    # Write artifacts
-    tape_path = out_dir / "gas_lstm_tape.parquet"
+        model, bundle, oof, epochs = nested_lstm_forecasts(X.iloc[:n_lab], y.iloc[:n_lab], cfg)
+    except ValueError as exc:
+        return unavailable(str(exc))
+    core_oof = pd.read_csv(root / cfg.part2_dir_name / "gas_oof_predictions.csv")
+    xgb_oof_path = root / cfg.part2b_dir_name / "gas_xgb_oof.csv"
+    comparable = aligned_oof(core_oof, oof)
+    xgb_oof = pd.read_csv(xgb_oof_path) if xgb_oof_path.exists() else pd.DataFrame()
+    comparable = comparable and aligned_oof(oof, xgb_oof)
+    validation = candidate_gate(oof, "pred_lstm")
+    lstm_rmse = float(np.sqrt(np.mean((oof.actual - oof.pred_lstm) ** 2)))
+    base_rmse, xgb_rmse = load_baseline_rmse(root / cfg.part2_dir_name, root / cfg.part2b_dir_name)
+    core = json.loads((root / cfg.part2_dir_name / "gas_part2_summary.json").read_text())
+    recommended = bool(comparable and validation["operator_validated"]
+                       and core.get("operator_validation", {}).get("operator_validated", False)
+                       and base_rmse is not None and xgb_rmse is not None
+                       and lstm_rmse < min(base_rmse, xgb_rmse))
+    positions = np.arange(cfg.sequence_length - 1, len(X))
+    values = X[get_feature_cols(X)].replace([np.inf, -np.inf], np.nan).to_numpy()
+    all_predictions = _lstm_predict(model, bundle, values, positions, cfg)
+    tape = pd.DataFrame({"week_date": X.week_date.iloc[positions].to_numpy(),
+                         "actual": y.iloc[positions].to_numpy(), "pred_lstm": all_predictions,
+                         "is_live": X.is_live.iloc[positions].to_numpy()})
+    tape_path, oof_path = out_dir / "gas_lstm_tape.parquet", out_dir / "gas_lstm_oof.csv"
     tape.to_parquet(tape_path, index=False)
     tape.to_csv(out_dir / "gas_lstm_tape.csv", index=False)
-    print(f"[Part2a] LSTM tape -> {tape_path}")
-
-    model_path = out_dir / "gas_lstm_model.pt"
-    torch.save({
-        "model_state_dict": model.state_dict(),
-        "n_features": n_features,
-        "y_mean": y_mean,
-        "y_std": y_std,
-        "sequence_length": seq_len,
-        "cfg": cfg,
-    }, model_path)
-    print(f"[Part2a] LSTM model -> {model_path}")
-
-    summary = {
-        "script_version": SCRIPT_VERSION,
-        "run_utc": datetime.now(timezone.utc).isoformat(),
-        "lstm_sleeve_recommended": bool(recommended),
-        "lstm_val_rmse": round(lstm_rmse, 4),
-        "lstm_val_mae": round(lstm_mae, 4),
-        "lstm_val_mape": round(lstm_mape, 4),
-        "baseline_val_rmse": base_rmse,
-        "xgb_val_rmse": xgb_rmse,
-        "latest_forecast": {
-            "anchor_week": latest_week.strftime("%Y-%m-%d"),
-            "target_week": target_week.strftime("%Y-%m-%d"),
-            "pred_lstm": round(latest_pred, 4),
-            "is_true_live_forecast": bool(n_live),
-        },
-        "gate_window": "last_val_weeks_labeled_rows",
-        "architecture": {
-            "sequence_length": seq_len,
-            "n_features": n_features,
-            "lstm_units": [cfg.lstm_hidden_size_1, cfg.lstm_hidden_size_2],
-            "dense_units": cfg.dense_hidden_size,
-            "dropout": cfg.dropout_rate,
-            "n_parameters": n_params,
-        },
-        "training": {
-            "epochs_run": len(train_losses),
-            "final_train_loss": round(train_losses[-1], 6),
-            "final_val_loss": round(val_losses[-1], 6),
-        },
-        **pipeline_identity(),
-    }
-    summary_path = out_dir / "gas_part2a_summary.json"
-    strict_json_dump(summary, summary_path)
-    print(f"[Part2a] Summary -> {summary_path}")
-
-    status = "RECOMMENDED" if recommended else "NOT_RECOMMENDED"
-    print(f"\n[Part2a] LSTM sleeve gate: {status}")
-    print("[Part2a] LSTM sleeve complete.")
+    oof.to_csv(oof_path, index=False)
+    imputer, scaler, mean, std = bundle
+    torch.save({"model_state_dict": model.state_dict(), "imputer": imputer, "scaler": scaler,
+                "y_mean": mean, "y_std": std, "cfg": asdict(cfg)}, out_dir / "gas_lstm_model.pt")
+    anchor = pd.Timestamp(tape.week_date.iloc[-1])
+    strict_json_dump({
+        "script_version": SCRIPT_VERSION, "run_utc": datetime.now(timezone.utc).isoformat(),
+        "lstm_sleeve_recommended": recommended, "lstm_val_rmse": lstm_rmse,
+        "baseline_val_rmse": base_rmse, "xgb_val_rmse": xgb_rmse,
+        "validation_protocol": NESTED_PROTOCOL, "gate_window": "expanding_origin_blocked_oof",
+        "operator_validation": validation, "inner_selected_epochs": epochs,
+        "oof_sha256": sha256_file(oof_path), "forecast_tape_sha256": sha256_file(tape_path),
+        "feature_matrix_sha256": sha256_file(part1_dir / "gas_feature_matrix.parquet"),
+        "latest_forecast": {"anchor_week": str(anchor.date()),
+                            "target_week": str((anchor + pd.Timedelta(days=7)).date()),
+                            "pred_lstm": float(all_predictions[-1]), "is_true_live_forecast": bool(len(X) > n_lab)},
+        **identity,
+    }, out_dir / "gas_part2a_summary.json")
     return 0
 
 

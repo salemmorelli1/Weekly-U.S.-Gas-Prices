@@ -51,8 +51,8 @@ def _colab_init(extra_packages=None):
 
 _colab_init(extra_packages=["yfinance", "fredapi", "duckdb", "pyarrow"])
 
-import hashlib, json, os, warnings
-from dataclasses import dataclass, field
+import hashlib, os, warnings
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -79,7 +79,9 @@ except Exception:
     duckdb = None
     HAVE_DUCKDB = False
 
-SCRIPT_VERSION = "GAS_PART0_V2_RELEASE_CONTRACT"
+from gas_source_contract import FRED_TARGET_SERIES, OBSERVATION_CONTRACT, observed_monday_prices
+
+SCRIPT_VERSION = "GAS_PART0_V3_EXACT_OBSERVATIONS"
 
 
 @dataclass(frozen=True)
@@ -107,8 +109,8 @@ class Part0Config:
 def get_fred_series() -> Dict[str, str]:
     """FRED identifiers verified for the production source contract."""
     return {
-        "gas_us_avg": "GASREGCOVW",
-        "gas_midwest": "GASMIDCOVW",
+        "gas_us_avg": FRED_TARGET_SERIES,
+        "gas_us_midgrade_conventional": "GASMIDCOVW",
         "crude_wti": "DCOILWTICO",
         "crude_brent": "DCOILBRENTEU",
         "cpi_energy": "CPIENGSL",
@@ -172,6 +174,10 @@ def fetch_fred_series(
 ) -> pd.Series:
     try:
         raw = fred.get_series(series_id, observation_start=start, observation_end=end)
+        if series_id in {FRED_TARGET_SERIES, "GASMIDCOVW"}:
+            raw = observed_monday_prices(raw)
+            raw.name = series_id
+            return raw
         raw.index = pd.to_datetime(raw.index)
         raw = raw.resample(freq).last().ffill()
         raw.name = series_id
@@ -275,10 +281,15 @@ def build_weekly_dataset(
 
     if "gas_us_avg" in master.columns:
         n_before = len(master)
-        master = master.dropna(subset=["gas_us_avg"])
+        # Keep the weekly calendar, including interior missing surveys. Trim
+        # only the unobserved edges; filling or dropping gaps changes H=1.
+        prices = pd.to_numeric(master["gas_us_avg"], errors="coerce")
+        master["gas_us_avg"] = prices.where(np.isfinite(prices) & prices.gt(0))
+        observed = master["gas_us_avg"].dropna()
+        master = master.loc[observed.index.min():observed.index.max()] if len(observed) else master.iloc[:0]
         dropped = n_before - len(master)
         if dropped:
-            print(f"[Part0] Dropped {dropped} rows with missing gas_us_avg")
+            print(f"[Part0] Trimmed {dropped} unobserved edge weeks")
 
     master = master.reset_index()
     master["week_date"] = pd.to_datetime(master["week_date"])
@@ -303,13 +314,14 @@ def check_freshness(df: pd.DataFrame, cfg: Part0Config) -> Dict[str, object]:
             "data_freshness_ok": False,
         }
 
-    observed = df.loc[
-        pd.to_numeric(df["gas_us_avg"], errors="coerce").notna()
-    ].copy()
+    prices = pd.to_numeric(df["gas_us_avg"], errors="coerce")
+    observed = df.loc[np.isfinite(prices) & prices.gt(0)].copy()
     observed["week_date"] = pd.to_datetime(
         observed["week_date"], errors="coerce"
     )
     observed = observed.dropna(subset=["week_date"])
+    if observed["week_date"].duplicated().any() or (observed["week_date"].dt.dayofweek != 0).any():
+        return {"freshness_status": "ERROR", "message": "Gas observations require unique Mondays", "data_freshness_ok": False}
     if observed.empty:
         return {
             "freshness_status": "ERROR",
@@ -326,7 +338,7 @@ def check_freshness(df: pd.DataFrame, cfg: Part0Config) -> Dict[str, object]:
     prospective = bool(target > decision)
     fresh = bool(
         is_monday
-        and 0 <= age_days <= cfg.freshness_warn_days
+        and 0 < age_days <= cfg.freshness_warn_days
         and prospective
         and n_weeks >= cfg.min_history_weeks
     )
@@ -368,6 +380,8 @@ def write_part0_summary(
         "n_columns": int(df.shape[1]),
         "columns": list(df.columns),
         "schema_hash": compute_schema_hash(df),
+        "price_observation_contract": OBSERVATION_CONTRACT,
+        "target_series_id": FRED_TARGET_SERIES,
         "freshness": freshness,
         "master_parquet_sha256": (
             sha256_file(parquet_path) if parquet_path and parquet_path.exists() else None

@@ -64,7 +64,7 @@ def validate_prospective_forecast(
     anchor = normalize_date(anchor_week, "anchor_week")
     target = normalize_date(target_date, "target_date")
 
-    if not bool(int(is_live_forecast)):
+    if float(is_live_forecast) != 1:
         raise ValueError("prospective publication requires is_live_forecast=1")
     if anchor.weekday() != 0:
         raise ValueError(f"anchor_week must be Monday, got {anchor.date()}")
@@ -76,6 +76,8 @@ def validate_prospective_forecast(
         raise ValueError(
             f"target_date {target.date()} is not after decision_date {decision.date()}"
         )
+    if decision <= anchor:
+        raise ValueError("decision_date must follow the Monday source observation")
     return decision, anchor, target
 
 
@@ -87,8 +89,19 @@ def protocol_eligible_record(row: Mapping[str, Any]) -> bool:
             target_date=row.get("target_date"),
             is_live_forecast=row.get("is_live_forecast", 0),
         )
-        prediction = float(row.get("pred_fusion"))
-        return math.isfinite(prediction)
+        if row.get("schema_version") != PROTOCOL_SCHEMA:
+            return False
+        issued = pd.Timestamp(row.get("run_utc"))
+        if pd.isna(issued) or issued.tzinfo is None:
+            return False
+        decision = normalize_date(row.get("decision_date"))
+        if issued.tz_convert(EASTERN).date() != decision.date():
+            return False
+        if any(str(row.get(key, "")).strip().lower() in {"", "nan", "none", "<na>"}
+               for key in ("pipeline_run_id", "source_code_sha")):
+            return False
+        prices = [float(row.get(key)) for key in ("pred_fusion", "pred_persistence")]
+        return all(math.isfinite(value) and value > 0 for value in prices)
     except (TypeError, ValueError):
         return False
 

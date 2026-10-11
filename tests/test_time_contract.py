@@ -60,6 +60,11 @@ def test_legacy_rows_do_not_enter_live_cohort():
         "target_date": "2026-09-14",
         "is_live_forecast": 1,
         "pred_fusion": 3.91,
+        "pred_persistence": 3.90,
+        "schema_version": PROTOCOL_SCHEMA,
+        "run_utc": "2026-09-08T19:00:00+00:00",
+        "pipeline_run_id": "test-run",
+        "source_code_sha": "a" * 40,
     }
     assert not protocol_eligible_record(legacy)
     assert protocol_eligible_record(valid)

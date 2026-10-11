@@ -167,6 +167,9 @@ def _prospective_row(value=3.9):
             "pred_fusion": value,
             "schema_version": "V2_RELEASE_LEDGER",
             "pipeline_run_id": "run-two",
+            "pred_persistence": 3.9,
+            "run_utc": "2026-09-08T19:00:00+00:00",
+            "source_code_sha": "a" * 40,
         }
     )
 
