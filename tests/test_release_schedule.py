@@ -3,6 +3,7 @@
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 from datetime import date, datetime
@@ -15,6 +16,23 @@ import gas_release_schedule as schedule
 import gas_run_weekly_prediction as runner
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def workflow_bash():
+    """Use Git for Windows Bash, avoiding the unrelated System32 WSL launcher."""
+    if os.name == "nt":
+        git = shutil.which("git")
+        assert git is not None, "Git for Windows is required for workflow verification"
+        git_path = Path(git)
+        candidates = [git_path.with_name("bash.exe")]
+        candidates.extend(parent / "bin/bash.exe" for parent in list(git_path.parents)[:3])
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+        raise AssertionError("Could not locate Git for Windows Bash beside git.exe")
+    bash = shutil.which("bash")
+    assert bash is not None, "Bash is required for workflow verification"
+    return bash
 
 
 @pytest.mark.parametrize(
@@ -160,7 +178,7 @@ def test_actual_workflow_preflight_outputs(tmp_path, clock, cron, event, status,
         GITHUB_OUTPUT=str(output),
     )
     result = subprocess.run(
-        ["bash", "-c", script],
+        [workflow_bash(), "-c", script],
         cwd=ROOT,
         env=env,
         capture_output=True,
