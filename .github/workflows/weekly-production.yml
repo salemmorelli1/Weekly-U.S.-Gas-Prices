@@ -3,8 +3,8 @@ name: Weekly Gas Price Forecast
 on:
   schedule:
     # EIA normally publishes Monday observations on Tuesday around 10 a.m. ET.
-    # Wednesday is a holiday/delay fallback and is idempotently suppressed
-    # when Tuesday already published the current Monday observation.
+    # The shared preflight skips Tuesday on EIA holiday weeks. Wednesday
+    # retries are suppressed when this source/target already succeeded.
     - cron: "30 11 * * 2"
       timezone: "America/New_York"
     - cron: "30 11 * * 3"
@@ -58,41 +58,7 @@ jobs:
           SCHEDULE_EXPRESSION: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import json
-          import os
-          from datetime import datetime, timedelta
-          from pathlib import Path
-          from zoneinfo import ZoneInfo
-
-          should_run = True
-          reason = "manual dispatch"
-          schedule = os.environ.get("SCHEDULE_EXPRESSION", "")
-          if os.environ.get("GITHUB_EVENT_NAME") == "schedule" and schedule.endswith("* * 3"):
-              today = datetime.now(ZoneInfo("America/New_York")).date()
-              current_monday = today - timedelta(days=today.weekday())
-              status_path = Path("artifacts_part3/pipeline_status.json")
-              if status_path.exists():
-                  status = json.loads(status_path.read_text(encoding="utf-8"))
-                  already_current = (
-                      status.get("status") == "SUCCESS"
-                      and status.get("source_observation_date") == current_monday.isoformat()
-                  )
-                  if already_current:
-                      should_run = False
-                      reason = f"Tuesday already published {current_monday}"
-                  else:
-                      reason = f"Wednesday fallback for {current_monday}"
-              else:
-                  reason = f"Wednesday fallback for {current_monday}; no status exists"
-          elif os.environ.get("GITHUB_EVENT_NAME") == "schedule":
-              reason = "normal Tuesday release"
-
-          print(f"should_run={should_run}: {reason}")
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
-              handle.write(f"run={'true' if should_run else 'false'}\n")
-              handle.write(f"reason={reason}\n")
-          PY
+          python gas_release_schedule.py
 
       - name: Set up Python 3.12
         if: steps.release.outputs.run == 'true'

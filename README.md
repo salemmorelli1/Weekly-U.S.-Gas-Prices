@@ -25,7 +25,7 @@ gas_part9    live stats (MAE, MAPE, HAC/HLN Diebold-Mariano vs persistence, drif
 
 The most recent week has no realized target yet, so Part 1 flags it as the
 live row. Models train on everything before it and predict it — that's the
-actual forecast, targeting the following Monday's EIA release. The prediction
+actual forecast, targeting the following Monday's price observation. The prediction
 log is keyed by target date. A target can be appended once; re-runs cannot
 revise its forecast or provenance.
 
@@ -64,7 +64,7 @@ Locally:
 pip install -r requirements.txt
 export FRED_API_KEY="..."
 export EIA_API_KEY="..."
-python gas_run_weekly_prediction.py --force        # --force = run on any day
+python gas_run_weekly_prediction.py --force        # bypass calendar/day guard only
 ```
 
 Add `--with-backfill` to also fetch realized prices for past predictions.
@@ -78,15 +78,37 @@ reviewed CPU-only build only when evaluating the optional LSTM sleeve.
 Three workflows:
 
 - `weekly-production.yml` — Tuesdays at 11:30 AM ET, with an idempotent
-  Wednesday holiday/delay fallback. Publishes the small release ledger and
+  Wednesday holiday/delay fallback. The shared EIA calendar skips the Tuesday
+  before a published Wednesday holiday release. Publishes the small release ledger and
   retains the full research bundle for 90 days as a workflow artifact.
 - `weekly-backfill.yml` — Wednesdays at 1:00 PM ET. Fills only exact target
   observations and re-runs the eligible live cohort.
 - `pages.yml` — verifies and deploys only the content-hashed committed data.
 
-The workflows use GitHub's schedule timezone field directly. They do not use
-delay-sensitive wall-clock gates, so scheduler delay cannot turn a failed
-publication into a green skip.
+The workflows use GitHub's schedule timezone field directly. The release
+preflight checks the earliest scheduled EIA publication time, rather than a
+narrow execution window: late jobs remain eligible. A due date does not prove
+that FRED has updated; Part 0 still rejects stale source weeks and past targets.
+
+`gas_release_schedule.py` uses the EIA holiday table reviewed October 13, 2026,
+including its two 2025 Tuesday exceptions. Automatic preflight covers reference
+Mondays January 6, 2025 through January 18, 2027. Refresh the pinned table and
+coverage when EIA publishes subsequent dates; unreviewed weeks fail explicitly.
+Scheduled retries skip a source/target pair already marked successful. Manual
+dispatches respect the earliest release time and may deliberately retry a due
+week; direct `--force` bypasses only the runner's calendar/day guard.
+
+Offline diagnostics (no downloads, training, or forecasts):
+
+```bash
+python gas_release_schedule.py --event schedule --schedule '30 11 * * 2' \
+  --now '2026-10-13T16:46:00-04:00'
+python gas_release_schedule.py --event schedule --schedule '30 11 * * 3' \
+  --now '2026-10-14T11:30:00-04:00'
+```
+
+See [the October 13 holiday-release audit](docs/HOLIDAY_RELEASE_AUDIT_2026-10-13.md)
+for the failed-run evidence and regression tests.
 
 Setup on a fork: add the two keys as Actions secrets, set Pages source to
 "GitHub Actions", and give workflows read/write permission under
