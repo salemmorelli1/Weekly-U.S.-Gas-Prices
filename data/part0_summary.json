@@ -1,7 +1,7 @@
 {
-  "script_version": "GAS_PART0_V2_RELEASE_CONTRACT",
-  "run_utc": "2026-10-06T20:29:39.704279+00:00",
-  "n_weeks": 1397,
+  "script_version": "GAS_PART0_V3_EXACT_OBSERVATIONS",
+  "run_utc": "2026-10-14T19:32:12.883433+00:00",
+  "n_weeks": 1398,
   "n_columns": 19,
   "columns": [
     "week_date",
@@ -16,7 +16,7 @@
     "sp500",
     "treasury_10y",
     "gas_us_avg",
-    "gas_midwest",
+    "gas_us_midgrade_conventional",
     "crude_wti",
     "crude_brent",
     "cpi_energy",
@@ -24,21 +24,23 @@
     "unemployment",
     "gdp_growth"
   ],
-  "schema_hash": "719ca52bb838f58e41c30f7513c316c518707f34ba3b1f1b0bde977b344aba16",
+  "schema_hash": "d9368c3c306555a68c9d0a95f2babf7e0e15e6570601b3d1c505af8a423c7e36",
+  "price_observation_contract": "EXACT_MONDAY_NO_FILL_V1",
+  "target_series_id": "GASREGCOVW",
   "freshness": {
-    "latest_week": "2026-10-05",
-    "forecast_target_week": "2026-10-12",
-    "decision_date_eastern": "2026-10-06",
-    "age_days": 1,
-    "n_weeks": 1397,
+    "latest_week": "2026-10-12",
+    "forecast_target_week": "2026-10-19",
+    "decision_date_eastern": "2026-10-14",
+    "age_days": 2,
+    "n_weeks": 1398,
     "has_min_history": true,
     "source_week_is_monday": true,
     "target_is_prospective": true,
     "data_freshness_ok": true,
     "freshness_status": "OK"
   },
-  "master_parquet_sha256": "c80e1717b8e21ab370d12108efa6e02cda962208cdb44c1f400ebb5bbdc576f6",
-  "pipeline_run_id": "37526749289",
+  "master_parquet_sha256": "0913884277e34ca09390e09158a8dd6d86db34a2f499da60ecb5e2d674c86147",
+  "pipeline_run_id": "38624403253",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "57ba9ba86cc1e74ff5adcb9c876f876ea2fcfbb8"
+  "source_code_sha": "f2376c273318d5dc70bd7521dac1b1dd6471f46d"
 }
