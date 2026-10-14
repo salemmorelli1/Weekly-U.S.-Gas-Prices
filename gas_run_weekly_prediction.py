@@ -40,6 +40,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
+from gas_release_schedule import EASTERN, decide_release_run
+
 
 # ── Colab / environment helpers ────────────────────────────────────────────────
 
@@ -245,9 +247,10 @@ def run_pipeline(
 # ── Release-day check ─────────────────────────────────────────────────────────
 
 def is_release_day(now: Optional[datetime] = None) -> bool:
-    """Return true on the normal Tuesday or holiday-fallback Wednesday."""
-    current = now or datetime.now(ZoneInfo("America/New_York"))
-    return current.weekday() in {1, 2}
+    """A Tuesday/Wednesday direct run must follow the scheduled EIA release."""
+    current = now if now is not None else datetime.now(EASTERN)
+    decision = decide_release_run(now=current)
+    return current.astimezone(EASTERN).weekday() in {1, 2} and decision.run
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -259,7 +262,8 @@ def main() -> int:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Run even if today is not Tuesday/Wednesday.",
+        help="Bypass the release-calendar/day guard for a manual run; "
+             "source freshness and prospective-target checks still apply.",
     )
     parser.add_argument(
         "--with-backfill",
@@ -299,11 +303,18 @@ def main() -> int:
         or datetime.now(timezone.utc).strftime("local-%Y%m%dT%H%M%S%fZ"),
     )
 
-    # Day-of-week guard. Workflows pass --force after their release-aware gate.
-    if not is_release_day(today) and not args.force:
-        print("\n[Runner] Today is not Tuesday or Wednesday Eastern time.")
-        print("         Run after the EIA weekly release, or use --force manually.")
-        return 0
+    # Workflows pass --force only after the shared release preflight succeeds.
+    if not args.force:
+        try:
+            if not is_release_day(today):
+                decision = decide_release_run(now=today)
+                reason = decision.reason if not decision.run else "outside Tuesday/Wednesday direct-run days"
+                print(f"\n[Runner] Skipped: {reason}.")
+                print("         Direct automatic runs use Tuesday/Wednesday Eastern time.")
+                return 0
+        except ValueError as exc:
+            print(f"\n[Runner] Release-calendar error: {exc}")
+            return 1
 
     # File audit
     print("\n=== CANONICAL FILE AUDIT ===")
