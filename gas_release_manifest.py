@@ -9,9 +9,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
-
-from gas_time_contract import sha256_file, strict_json_dump
+from gas_time_contract import (
+    assert_immutable_prediction_inputs, read_prediction_log, sha256_file, strict_json_dump,
+)
 
 SCHEMA = "GAS_RELEASE_MANIFEST_V1"
 
@@ -103,7 +103,7 @@ def validate_release(root: Path) -> dict[str, str]:
     )
 
     log_path = root / "artifacts_part3/prediction_log.csv"
-    ledger = pd.read_csv(log_path, dtype={"pipeline_run_id": "string"})
+    ledger = read_prediction_log(log_path)
     target_rows = ledger.loc[
         ledger["target_date"].astype(str).str.strip().eq(target_date)
     ]
@@ -192,14 +192,9 @@ def stage_backfill(root: Path) -> Path:
         root / "artifacts_part9/live_attribution_tape.csv",
     )
     # Updating realized values must not silently re-sign a rewritten forecast.
-    prior = pd.read_csv(data_dir / "prediction_log.csv", dtype={"pipeline_run_id": "string"})
-    updated = pd.read_csv(sources[0], dtype={"pipeline_run_id": "string"})
-    mutable = {"actual", "actual_date", "mae", "rmse", "mape", "direction_correct"}
-    immutable = [key for key in prior if key not in mutable]
-    try:
-        pd.testing.assert_frame_equal(prior[immutable], updated[immutable], check_dtype=False)
-    except (AssertionError, KeyError) as exc:
-        raise ValueError("Backfill cannot rewrite immutable forecast inputs") from exc
+    prior = read_prediction_log(data_dir / "prediction_log.csv")
+    updated = read_prediction_log(sources[0])
+    assert_immutable_prediction_inputs(prior, updated)
     for source in sources:
         if not source.is_file():
             raise FileNotFoundError(f"backfill release file missing: {source}")

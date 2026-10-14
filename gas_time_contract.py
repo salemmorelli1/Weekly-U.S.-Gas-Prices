@@ -22,6 +22,75 @@ import pandas as pd
 EASTERN = ZoneInfo("America/New_York")
 PROTOCOL_SCHEMA = "V2_RELEASE_LEDGER"
 
+# CSV inference must never treat these labels as numbers or NA markers.
+PREDICTION_TEXT_COLUMNS = (
+    "decision_date", "target_date", "anchor_week", "week_date", "actual_date",
+    "confidence", "publication_mode", "regime_label", "schema_version", "run_utc",
+    "pipeline_run_id", "pipeline_run_attempt", "source_code_sha",
+)
+REALIZED_COLUMNS = frozenset({
+    "actual", "actual_date", "mae", "rmse", "mape", "direction_correct",
+})
+
+
+def read_prediction_log(path: str | Path) -> pd.DataFrame:
+    """Read local ledger CSV without changing opaque labels or float values.
+
+    Converters retain empty and NA-looking text tokens as well as leading zeros
+    and old labels ending in '.0'. Numeric columns still use normal NA handling.
+    The round-trip float parser permits exact checks after CSV serialization.
+    """
+    return pd.read_csv(
+        Path(path), engine="c", encoding="utf-8", float_precision="round_trip",
+        converters={column: str for column in PREDICTION_TEXT_COLUMNS},
+    )
+
+
+def assert_immutable_prediction_inputs(prior: pd.DataFrame, updated: pd.DataFrame) -> None:
+    """Allow only realized-evidence changes, with no numerical tolerance."""
+    immutable = [column for column in prior if column not in REALIZED_COLUMNS]
+    updated_immutable = [column for column in updated if column not in REALIZED_COLUMNS]
+    if immutable != updated_immutable:
+        raise ValueError("Backfill cannot rewrite immutable forecast input columns")
+    try:
+        pd.testing.assert_frame_equal(
+            prior[immutable].reset_index(drop=True),
+            updated[immutable].reset_index(drop=True),
+            check_dtype=False, check_exact=True,
+        )
+    except AssertionError as exc:
+        raise ValueError("Backfill cannot rewrite immutable forecast inputs") from exc
+
+
+def write_prediction_log_atomic(frame: pd.DataFrame, path: str | Path) -> pd.DataFrame:
+    """Verify every serialized cell before replacing the canonical ledger."""
+    expected = frame.copy(deep=True).reset_index(drop=True)
+
+    def text_cell(value: Any) -> str:
+        if pd.isna(value):
+            return ""
+        if not isinstance(value, str):
+            raise ValueError("Prediction log text fields require strings, not inferred numbers")
+        return value
+
+    for column in PREDICTION_TEXT_COLUMNS:
+        if column in expected:
+            expected[column] = expected[column].map(text_cell)
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    try:
+        expected.to_csv(temporary, index=False, encoding="utf-8", lineterminator="\n")
+        verified = read_prediction_log(temporary)
+        try:
+            pd.testing.assert_frame_equal(expected, verified, check_dtype=False, check_exact=True)
+        except AssertionError as exc:
+            raise ValueError("Prediction log CSV round-trip changed values") from exc
+        temporary.replace(destination)
+        return verified
+    finally:
+        temporary.unlink(missing_ok=True)
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)

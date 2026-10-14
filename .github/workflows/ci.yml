@@ -62,6 +62,22 @@ jobs:
           python -m pytest -q
           python gas_release_manifest.py verify
 
+      - name: Replay backfill with only its production dependencies
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+          directory = Path(os.environ["RUNNER_TEMP"]) / "backfill-runtime"
+          subprocess.run([sys.executable, "-m", "venv", str(directory)], check=True)
+          interpreter = directory / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+          subprocess.run([str(interpreter), "-m", "pip", "install", "--disable-pip-version-check", "-r", "requirements-backfill-lock.txt"], check=True)
+          subprocess.run([str(interpreter), "-m", "pip", "check"], check=True)
+          subprocess.run([str(interpreter), "gas_replay_backfill.py", "--require-minimal"], check=True)
+          PY
+
       - name: Parse workflow YAML
         run: |
           set -euo pipefail

@@ -16,7 +16,9 @@ import gas_part3_governance as governance
 import gas_part6_regime_engine as regimes
 import gas_part9_live_attribution as attribution
 import gas_release_manifest as release
-from gas_time_contract import protocol_eligible_record, sha256_file
+from gas_time_contract import (
+    protocol_eligible_record, read_prediction_log, sha256_file, write_prediction_log_atomic,
+)
 
 
 def test_disposable_pipeline_trains_stages_and_backfills_without_rewriting_forecasts(tmp_path, monkeypatch):
@@ -75,7 +77,7 @@ def test_disposable_pipeline_trains_stages_and_backfills_without_rewriting_forec
     release.stage_release(tmp_path)
     release.verify_manifest(tmp_path)
     ledger_path=tmp_path/'artifacts_part3/prediction_log.csv'
-    before=pd.read_csv(ledger_path)
+    before=read_prediction_log(ledger_path)
     assert len(before)==1 and protocol_eligible_record(before.iloc[0])
     summary=json.loads((tmp_path/'artifacts_part3/gas_part3_summary.json').read_text())
     if not summary['operator_validated']:
@@ -89,7 +91,7 @@ def test_disposable_pipeline_trains_stages_and_backfills_without_rewriting_forec
     assert matured==1 and new==1
     immutable=[key for key in before if key not in {'actual','actual_date','mae','rmse','mape','direction_correct'}]
     pd.testing.assert_frame_equal(before[immutable],updated[immutable])
-    updated.to_csv(ledger_path,index=False)
+    write_prediction_log_atomic(updated,ledger_path)
     assert attribution.main()==0
     release.stage_backfill(tmp_path)
     release.verify_manifest(tmp_path)
