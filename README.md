@@ -110,6 +110,24 @@ python gas_release_schedule.py --event schedule --schedule '30 11 * * 3' \
 See [the October 13 holiday-release audit](docs/HOLIDAY_RELEASE_AUDIT_2026-10-13.md)
 for the failed-run evidence and regression tests.
 
+The October 14 production and Pages runs succeeded. A later backfill failed
+because CSV inference changed the latest run ID from `38624403253` to
+`38624403253.0`. Ledger readers now preserve provenance as text, and both
+ledger writers verify every serialized value before replacement. Backfill
+staging requires exact frozen inputs; legacy `.0` IDs retain their original text.
+
+Replay that failure and correction without API calls or publication writes:
+
+```bash
+python gas_replay_backfill.py
+```
+
+CI also runs `python gas_replay_backfill.py --require-minimal` in a separate
+environment containing only `requirements-backfill-lock.txt`. The pinned
+historical fixture is tested on Linux and Windows. See
+[the October 14 backfill audit](docs/BACKFILL_IDENTIFIER_AUDIT_2026-10-14.md)
+for evidence and recovery instructions.
+
 Setup on a fork: add the two keys as Actions secrets, set Pages source to
 "GitHub Actions", and give workflows read/write permission under
 Settings → Actions → General.

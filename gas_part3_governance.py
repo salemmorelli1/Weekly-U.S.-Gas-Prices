@@ -75,9 +75,11 @@ from gas_time_contract import (
     eastern_today,
     pipeline_identity,
     protocol_eligible_record,
+    read_prediction_log,
     sha256_file,
     strict_json_dump,
     validate_prospective_forecast,
+    write_prediction_log_atomic,
 )
 
 warnings.filterwarnings("ignore")
@@ -505,7 +507,7 @@ def upsert_prediction_log(
 ) -> pd.DataFrame:
     """Append a target once; never revise a published forecast or provenance."""
     if predlog_path.exists():
-        df = pd.read_csv(predlog_path, dtype={"pipeline_run_id": "string"})
+        df = read_prediction_log(predlog_path)
     else:
         df = pd.DataFrame(columns=PREDLOG_COLUMNS)
 
@@ -726,11 +728,7 @@ def main() -> int:
     new_row = build_prediction_log_row(fusion_df, cfg)
     predlog_path = out_dir / "prediction_log.csv"
     df_log = upsert_prediction_log(predlog_path, new_row)
-    tmp_path = predlog_path.with_suffix(".csv.tmp")
-    df_log.to_csv(tmp_path, index=False)
-    tmp_path.replace(predlog_path)
-    verify = pd.read_csv(predlog_path)
-    assert len(verify) == len(df_log), "Prediction log row count mismatch after write"
+    write_prediction_log_atomic(df_log, predlog_path)
     print(f"[Part3] Prediction log -> {predlog_path} ({len(df_log)} rows)")
 
     target_mask = df_log["target_date"].astype(str).eq(

@@ -38,7 +38,10 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from gas_time_contract import eastern_today, protocol_eligible_record
+from gas_time_contract import (
+    assert_immutable_prediction_inputs, eastern_today, protocol_eligible_record,
+    read_prediction_log, write_prediction_log_atomic,
+)
 
 # ── Colab / environment detection ─────────────────────────────────────────────
 _IN_COLAB = "google.colab" in sys.modules
@@ -387,7 +390,7 @@ def main(argv=None) -> int:
         print("[Backfill] ERROR: prediction_log.csv not found. Run gas_part3 first.")
         return 1
 
-    df = pd.read_csv(PREDLOG_PATH)
+    df = read_prediction_log(PREDLOG_PATH)
     if df.empty:
         print("[Backfill] WARN: prediction_log.csv is empty.")
         return 0
@@ -420,7 +423,8 @@ def main(argv=None) -> int:
           f"on {latest_price}")
 
     # Backfill
-    df_updated, matured, newly = backfill(df, price_history, force=args.force)
+    df_updated, matured, newly = backfill(df.copy(deep=True), price_history, force=args.force)
+    assert_immutable_prediction_inputs(df, df_updated)
 
     # Summary stats
     realized_mask = pd.to_numeric(df_updated.get("actual", pd.Series(dtype=float)),
@@ -451,15 +455,10 @@ def main(argv=None) -> int:
         print("[Backfill] DRY RUN — no file written. Remove --dry-run to apply.")
         return 0
 
-    # Write atomically
-    tmp_path = PREDLOG_PATH.with_suffix(".csv.tmp")
-    df_updated.to_csv(tmp_path, index=False)
-    tmp_path.replace(PREDLOG_PATH)
+    # Validate the complete serialized result before replacing the canonical log.
+    write_prediction_log_atomic(df_updated, PREDLOG_PATH)
     print(f"\n[Backfill] Prediction log written -> {PREDLOG_PATH}")
 
-    # Verify round-trip
-    verify = pd.read_csv(PREDLOG_PATH)
-    assert len(verify) == len(df_updated), "Row count mismatch after write"
     print("[Backfill] Round-trip verification passed.")
     print("\n[Backfill] Backfill complete.")
     return 0

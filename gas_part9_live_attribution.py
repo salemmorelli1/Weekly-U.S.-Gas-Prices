@@ -62,7 +62,9 @@ import numpy as np
 import pandas as pd
 
 from gas_forecast_statistics import compare_squared_errors
-from gas_time_contract import eastern_today, pipeline_identity, protocol_eligible_record, strict_json_dump
+from gas_time_contract import (
+    eastern_today, pipeline_identity, protocol_eligible_record, read_prediction_log, strict_json_dump,
+)
 
 warnings.filterwarnings("ignore")
 
@@ -161,7 +163,7 @@ def load_realized_rows(predlog_path: Path) -> pd.DataFrame:
         print(f"[Part9] Prediction log not found: {predlog_path}")
         return pd.DataFrame()
 
-    df = pd.read_csv(predlog_path)
+    df = read_prediction_log(predlog_path)
     if df.empty:
         return df
 
