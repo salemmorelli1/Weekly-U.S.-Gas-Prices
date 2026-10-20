@@ -1,11 +1,11 @@
 {
   "status": "SUCCESS",
-  "source_observation_date": "2026-10-12",
-  "target_date": "2026-10-19",
+  "source_observation_date": "2026-10-19",
+  "target_date": "2026-10-26",
   "operator_validated": false,
   "publication_mode": "FAIL_CLOSED_PERSISTENCE",
-  "prediction_pipeline_run_id": "38624403253",
-  "pipeline_run_id": "38624403253",
+  "prediction_pipeline_run_id": "39483900730",
+  "pipeline_run_id": "39483900730",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "f2376c273318d5dc70bd7521dac1b1dd6471f46d"
+  "source_code_sha": "c3dc4d1e3fb202e24d78a8942e77e4a55c6812c8"
 }
