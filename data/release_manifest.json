@@ -1,43 +1,43 @@
 {
   "schema_version": "GAS_RELEASE_MANIFEST_V1",
-  "generated_utc": "2026-10-21T20:28:18.291024+00:00",
-  "pipeline_run_id": "39483900730",
-  "prediction_pipeline_run_id": "39483900730",
-  "source_observation_date": "2026-10-19",
-  "target_date": "2026-10-26",
+  "generated_utc": "2026-10-27T20:13:27.710742+00:00",
+  "pipeline_run_id": "40575760466",
+  "prediction_pipeline_run_id": "40575760466",
+  "source_observation_date": "2026-10-26",
+  "target_date": "2026-11-02",
   "operator_validated": "false",
   "publication_mode": "FAIL_CLOSED_PERSISTENCE",
   "files": {
     "gas_forecast_tape.csv": {
-      "sha256": "b6aeb2c7e88e4257a862f6a05b9cb3f282c09ab515f4d831f96173fd697002e5",
-      "size_bytes": 195967
+      "sha256": "282f15f35ad956dc5d8172be9cec9d69fc5a02b42688d1fb3c367f2777ea771c",
+      "size_bytes": 196199
     },
     "gas_fusion_oof.csv": {
-      "sha256": "854b1a7b8eb7f9fbc70a432325afbbb4904cae16a0194553f4ef2a81a2fd5b3e",
-      "size_bytes": 3232
+      "sha256": "467fecce3965f73c7a3e0342303ec4834b0a813ba5f6e9c6377fa6d1320e5aed",
+      "size_bytes": 3231
     },
     "gas_oof_predictions.csv": {
-      "sha256": "4cbe7f74ace2a4ae5f22d22e12cb7a1c08e6aac35ad865dc7b1bf05dd156ff4c",
-      "size_bytes": 14387
+      "sha256": "bf564e505461d71781da055d13da0825a5e21a2a3e7b1f1b4497200add24ff31",
+      "size_bytes": 14434
     },
     "gas_part2_summary.json": {
-      "sha256": "feda60a15de6e590d2fb5a287d6e2c5acbd904661c5342e32218a8541c0539de",
-      "size_bytes": 3028
+      "sha256": "2b53bbfa5407699182fdc4e6c540574ae93c61e25a420c050304fa5e209992e5",
+      "size_bytes": 3031
     },
     "gas_part2b_summary.json": {
-      "sha256": "022dfbe4313292ae1d24a8bed4b740759decab4557f0342144868d2fb537ef5e",
+      "sha256": "d08015bba9a9af4c5bda4f209c3d8253245b0855761f8fe3515b42d8718df9d5",
       "size_bytes": 1362
     },
     "gas_part3_summary.json": {
-      "sha256": "96bb072e76b839f0330010e223ff17fd39e715ec3303cd88f6c2c0015e4366d1",
-      "size_bytes": 1380
+      "sha256": "d8e143f0f82594d81eeab73951a4901cdcc4291c48ace3a654f5f78fbfae148c",
+      "size_bytes": 1383
     },
     "gas_regime_meta.json": {
-      "sha256": "b4ffdccf214d7f20dec6a17463dd223061db08d638336e66f5b706f6277ebdda",
-      "size_bytes": 959
+      "sha256": "48d0ac43a41bd16678a51ccedbf919b3a58acd629b2b9cdb76bfdcf687fcd486",
+      "size_bytes": 960
     },
     "live_attribution_report.json": {
-      "sha256": "933061537e220d25d702c6d1791519847dbd0c6d878106cd19d8c94bd5c53950",
+      "sha256": "de987b5c22fd3e6a01e635131e3766f3381278a7c22da2eeae6bb1218101e8c2",
       "size_bytes": 1786
     },
     "live_attribution_tape.csv": {
@@ -45,25 +45,24 @@
       "size_bytes": 2442
     },
     "part0_summary.json": {
-      "sha256": "ab59ae75b1216e13fdef9eeb58c58dc551e50745d67c2de04326cdcf39f4fe88",
+      "sha256": "35a6e8ad77dcb7cd0c75be853a7253207ece6050d5158acbb9b9ab627f432ae5",
       "size_bytes": 1265
     },
     "part0c_summary.json": {
-      "sha256": "c8a2ea81e631000a6ee4b056a24ca98018f8dacfd1227f9bfd9222dd2f7c703f",
+      "sha256": "1a79206614fd566388cbb35ba66e58b99be01688e9ee36c36b3c272912a6f0dc",
       "size_bytes": 1933
     },
     "part1_summary.json": {
-      "sha256": "89f256af07d05ddf29676d14e35af43daaff51ba1983b98686c6c7c0120fab1f",
+      "sha256": "bd389db57dc0bf5478d95247666837c88dc0d3feb48338294ee2a402bf8dfb63",
       "size_bytes": 3254
     },
     "pipeline_status.json": {
-      "sha256": "6d882e5264a3393a45ebc81987ad4f65432912bf5d1afe2af4cbcd8013e9bc5f",
+      "sha256": "0b6ed776f614836285d6ba792b92ffcf152bb76c279a734b3ae9e427b1bca3e6",
       "size_bytes": 359
     },
     "prediction_log.csv": {
-      "sha256": "cf135dd15b1cff09419c86b6860995fcdf2fe2301232bc69ba5b1db5a192f56c",
-      "size_bytes": 2349
+      "sha256": "1a664cfe8d88429133008d3714a1106a24e0b58e2a9b2ba22952c88b12c6bdf6",
+      "size_bytes": 2597
     }
-  },
-  "last_backfill_run_id": "39670462017"
+  }
 }

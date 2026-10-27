@@ -1,6 +1,6 @@
 {
   "script_version": "GAS_PART3_V3_VERIFIED_FUSION",
-  "run_utc": "2026-10-20T19:32:19.502459+00:00",
+  "run_utc": "2026-10-27T20:13:26.034280+00:00",
   "active_sleeves": [
     "part2"
   ],
@@ -8,36 +8,36 @@
     "part2": 1.0
   },
   "latest_prediction": {
-    "decision_date": "2026-10-20",
-    "target_date": "2026-10-26",
-    "anchor_week": "2026-10-19",
+    "decision_date": "2026-10-27",
+    "target_date": "2026-11-02",
+    "anchor_week": "2026-10-26",
     "is_live_forecast": 1,
     "pred_fusion": 4.121,
-    "pred_candidate": 4.0,
+    "pred_candidate": 4.028,
     "pred_persistence": 4.121,
     "confidence": "NOT_VALIDATED",
     "regime": "NORMAL__STATE_3",
     "operator_validated": false,
     "publication_mode": "FAIL_CLOSED_PERSISTENCE",
-    "pipeline_run_id": "39483900730",
+    "pipeline_run_id": "40575760466",
     "pipeline_run_attempt": "1",
-    "source_code_sha": "c3dc4d1e3fb202e24d78a8942e77e4a55c6812c8"
+    "source_code_sha": "4281d9472b25fdd70d2338f2f6d1d398612d806f"
   },
-  "prediction_log_rows": 8,
+  "prediction_log_rows": 9,
   "operator_validated": false,
   "publication_mode": "FAIL_CLOSED_PERSISTENCE",
   "fusion_operator_validation": {
     "operator_validated": false,
-    "ensemble_rmse": 0.1440711081775394,
-    "persistence_rmse": 0.11863008115080317,
-    "paired_p_value": 0.9960518029844075,
+    "ensemble_rmse": 0.14117961505930787,
+    "persistence_rmse": 0.11859084476273224,
+    "paired_p_value": 0.9946122471051816,
     "paired_test_method": "DIEBOLD_MARIANO_HLN_HAC",
     "positive_folds": 0,
     "required_positive_folds": 3,
     "n_paired": 52
   },
-  "fusion_oof_sha256": "854b1a7b8eb7f9fbc70a432325afbbb4904cae16a0194553f4ef2a81a2fd5b3e",
-  "pipeline_run_id": "39483900730",
+  "fusion_oof_sha256": "467fecce3965f73c7a3e0342303ec4834b0a813ba5f6e9c6377fa6d1320e5aed",
+  "pipeline_run_id": "40575760466",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "c3dc4d1e3fb202e24d78a8942e77e4a55c6812c8"
+  "source_code_sha": "4281d9472b25fdd70d2338f2f6d1d398612d806f"
 }
