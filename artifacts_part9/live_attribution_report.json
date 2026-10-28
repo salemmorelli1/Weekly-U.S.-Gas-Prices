@@ -1,53 +1,53 @@
 {
   "script_version": "GAS_PART9_V3_HAC_ELIGIBLE_COHORT",
-  "run_utc": "2026-10-27T20:13:27.198922+00:00",
-  "n_realized": 5,
+  "run_utc": "2026-10-28T21:31:44.588790+00:00",
+  "n_realized": 6,
   "all_time_metrics": {
-    "mae": 0.077,
-    "rmse": 0.1033,
-    "mape": 1.8151,
-    "dir_acc": 0.0,
-    "n_realized": 5
+    "mae": 0.0642,
+    "rmse": 0.0943,
+    "mape": 1.5126,
+    "dir_acc": 0.1667,
+    "n_realized": 6
   },
   "naive_metrics": {
-    "mae": 0.077,
-    "rmse": 0.1033,
-    "mape": 1.8151,
-    "dir_acc": 0.0
+    "mae": 0.0642,
+    "rmse": 0.0943,
+    "mape": 1.5126,
+    "dir_acc": 0.1667
   },
   "rolling_metrics": {
     "rolling_4w": {
-      "mae": 0.054,
-      "rmse": 0.0787,
-      "mape": 1.2947,
-      "dir_acc": 0.0,
+      "mae": 0.047,
+      "rmse": 0.0774,
+      "mape": 1.1322,
+      "dir_acc": 0.25,
       "n": 4
     },
     "rolling_8w": {
-      "mae": 0.077,
-      "rmse": 0.1033,
-      "mape": 1.8151,
-      "dir_acc": 0.0,
-      "n": 5
+      "mae": 0.0642,
+      "rmse": 0.0943,
+      "mape": 1.5126,
+      "dir_acc": 0.1667,
+      "n": 6
     },
     "rolling_13w": {
-      "mae": 0.077,
-      "rmse": 0.1033,
-      "mape": 1.8151,
-      "dir_acc": 0.0,
-      "n": 5
+      "mae": 0.0642,
+      "rmse": 0.0943,
+      "mape": 1.5126,
+      "dir_acc": 0.1667,
+      "n": 6
     },
     "rolling_26w": {
-      "mae": 0.077,
-      "rmse": 0.1033,
-      "mape": 1.8151,
-      "dir_acc": 0.0,
-      "n": 5
+      "mae": 0.0642,
+      "rmse": 0.0943,
+      "mape": 1.5126,
+      "dir_acc": 0.1667,
+      "n": 6
     }
   },
   "diebold_mariano": {
     "dm_method": "DIEBOLD_MARIANO_HLN_HAC",
-    "dm_n": 5,
+    "dm_n": 6,
     "dm_alpha": 0.1,
     "dm_hac_lags": null,
     "dm_mean_loss_advantage": null,
@@ -64,16 +64,16 @@
   },
   "model_health": {
     "health_status": "INSUFFICIENT_DATA",
-    "n_realized": 5,
+    "n_realized": 6,
     "min_required": 52,
     "issues": [
-      "Only 5 realized observations (min 52)"
+      "Only 6 realized observations (min 52)"
     ],
     "recommendation": "Continue accumulating live data before evaluation."
   },
   "beats_naive_pct": 0.0,
   "cohort_contract": "prospective_exact_target_only",
-  "pipeline_run_id": "40575760466",
+  "pipeline_run_id": "40772611808",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "4281d9472b25fdd70d2338f2f6d1d398612d806f"
+  "source_code_sha": "e62eff2781e757b9323793bbf96584f3b16d0b4c"
 }
