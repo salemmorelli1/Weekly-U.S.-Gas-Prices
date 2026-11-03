@@ -1,7 +1,7 @@
 {
   "script_version": "GAS_PART0C_V3_SERIES_UNITS",
-  "run_utc": "2026-10-27T20:12:04.930028+00:00",
-  "n_weeks": 1400,
+  "run_utc": "2026-11-03T21:54:14.184960+00:00",
+  "n_weeks": 1401,
   "eia_series_fetched": 18,
   "eia_series_names": [
     "eia_gas_us_regular",
@@ -24,27 +24,27 @@
     "eia_gas_chg_12w"
   ],
   "coverage_n_obs": {
-    "eia_gas_us_regular": 1400,
-    "eia_gas_us_midgrade": 1400,
-    "eia_gas_us_premium": 1400,
-    "eia_gas_us_diesel": 1400,
-    "eia_gas_stocks_total": 1399,
-    "eia_crude_stocks": 1399,
-    "eia_total_pet_stocks": 1399,
-    "eia_gas_demand": 1399,
-    "eia_crude_input_mbbl": 1399,
-    "eia_crude_imports": 1399,
-    "eia_gas_days_supply": 1399,
-    "eia_gas_stocks_total_zscore": 1386,
-    "eia_crude_stocks_zscore": 1386,
-    "eia_total_pet_stocks_zscore": 1386,
-    "eia_gas_demand_trend": 1386,
-    "eia_gas_chg_1w": 1398,
-    "eia_gas_chg_4w": 1395,
-    "eia_gas_chg_12w": 1387
+    "eia_gas_us_regular": 1401,
+    "eia_gas_us_midgrade": 1401,
+    "eia_gas_us_premium": 1401,
+    "eia_gas_us_diesel": 1401,
+    "eia_gas_stocks_total": 1400,
+    "eia_crude_stocks": 1400,
+    "eia_total_pet_stocks": 1400,
+    "eia_gas_demand": 1400,
+    "eia_crude_input_mbbl": 1400,
+    "eia_crude_imports": 1400,
+    "eia_gas_days_supply": 1400,
+    "eia_gas_stocks_total_zscore": 1387,
+    "eia_crude_stocks_zscore": 1387,
+    "eia_total_pet_stocks_zscore": 1387,
+    "eia_gas_demand_trend": 1387,
+    "eia_gas_chg_1w": 1399,
+    "eia_gas_chg_4w": 1396,
+    "eia_gas_chg_12w": 1388
   },
   "history_start": "2000-01-01",
-  "history_end": "2026-10-27",
+  "history_end": "2026-11-03",
   "fundamental_availability_lag_weeks": 1,
   "price_series_ids": {
     "eia_gas_us_regular": "PET.EMM_EPMRU_PTE_NUS_DPG.W",
@@ -53,8 +53,8 @@
     "eia_gas_us_diesel": "PET.EMD_EPD2D_PTE_NUS_DPG.W"
   },
   "days_supply_units": "thousand_barrels / thousand_barrels_per_day",
-  "master_parquet_sha256": "65b0d9368ddc3dcdeaa23b4ba8869c6b0ae8ec310f8d0aabef36d2efab027b8d",
-  "pipeline_run_id": "40575760466",
+  "master_parquet_sha256": "ed9d422a97592924e48345051f76dddf9739bb563f6e9f8841ba1d07dbc1e140",
+  "pipeline_run_id": "41725796065",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "4281d9472b25fdd70d2338f2f6d1d398612d806f"
+  "source_code_sha": "f63d3f0b2ef8affcdf6a3390a8573feec4bf0b6e"
 }

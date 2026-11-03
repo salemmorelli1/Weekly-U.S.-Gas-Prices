@@ -1,11 +1,11 @@
 {
   "script_version": "GAS_PART1_V3_POINT_IN_TIME_FEATURES",
-  "run_utc": "2026-10-27T20:12:08.901109+00:00",
-  "n_weeks": 1400,
-  "n_labeled_rows": 1399,
+  "run_utc": "2026-11-03T21:54:17.844629+00:00",
+  "n_weeks": 1401,
+  "n_labeled_rows": 1400,
   "n_live_rows": 1,
   "live_week_dates": [
-    "2026-10-26"
+    "2026-11-02"
   ],
   "n_features": 98,
   "feature_names": [
@@ -109,21 +109,21 @@
     "eia_days_supply_z"
   ],
   "target_col": "target_gas_price",
-  "target_mean": 2.624170121515368,
-  "target_std": 0.7771726523450175,
+  "target_mean": 2.62515,
+  "target_std": 0.7777594892303918,
   "target_min": 1.042,
   "target_max": 4.844,
   "date_range": {
     "start": "2000-01-03",
-    "end": "2026-10-26"
+    "end": "2026-11-02"
   },
   "high_nan_features": {},
   "horizon_weeks": 1,
   "predictive_regime_features_enabled": false,
   "non_vintage_macro_features_enabled": false,
-  "feature_matrix_sha256": "819b391c44333c55386ab79589e97d1c5e4996fdc82af0baf1c2018697bf761c",
-  "target_sha256": "1189aea47f6e82dec6334db1d3b4189af598b9ab0e40f201b4edc09def7b5c30",
-  "pipeline_run_id": "40575760466",
+  "feature_matrix_sha256": "b3e4b71e674c22edd657f8b77057911e17c58ecd02c0913b08989fc5fc57dcf8",
+  "target_sha256": "0add20a00acc74d2dcba00bd3f6cff3c4dfc5c6d8c310253c990ca286d886102",
+  "pipeline_run_id": "41725796065",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "4281d9472b25fdd70d2338f2f6d1d398612d806f"
+  "source_code_sha": "f63d3f0b2ef8affcdf6a3390a8573feec4bf0b6e"
 }
