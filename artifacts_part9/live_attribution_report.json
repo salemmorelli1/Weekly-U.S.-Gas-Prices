@@ -1,6 +1,6 @@
 {
   "script_version": "GAS_PART9_V3_HAC_ELIGIBLE_COHORT",
-  "run_utc": "2026-11-04T23:18:47.646493+00:00",
+  "run_utc": "2026-11-10T21:54:48.956900+00:00",
   "n_realized": 7,
   "all_time_metrics": {
     "mae": 0.0729,
@@ -73,7 +73,7 @@
   },
   "beats_naive_pct": 0.0,
   "cohort_contract": "prospective_exact_target_only",
-  "pipeline_run_id": "41932639768",
+  "pipeline_run_id": "42909243057",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "21f6ed0fac4bc77e88f529fbe954f047d8f187e1"
+  "source_code_sha": "7d7f8a988eadd5e270b4860d573412ec7620d730"
 }

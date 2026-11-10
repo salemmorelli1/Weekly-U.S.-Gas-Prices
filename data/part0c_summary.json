@@ -1,7 +1,7 @@
 {
   "script_version": "GAS_PART0C_V3_SERIES_UNITS",
-  "run_utc": "2026-11-03T21:54:14.184960+00:00",
-  "n_weeks": 1401,
+  "run_utc": "2026-11-10T21:53:30.333701+00:00",
+  "n_weeks": 1402,
   "eia_series_fetched": 18,
   "eia_series_names": [
     "eia_gas_us_regular",
@@ -24,27 +24,27 @@
     "eia_gas_chg_12w"
   ],
   "coverage_n_obs": {
-    "eia_gas_us_regular": 1401,
-    "eia_gas_us_midgrade": 1401,
-    "eia_gas_us_premium": 1401,
-    "eia_gas_us_diesel": 1401,
-    "eia_gas_stocks_total": 1400,
-    "eia_crude_stocks": 1400,
-    "eia_total_pet_stocks": 1400,
-    "eia_gas_demand": 1400,
-    "eia_crude_input_mbbl": 1400,
-    "eia_crude_imports": 1400,
-    "eia_gas_days_supply": 1400,
-    "eia_gas_stocks_total_zscore": 1387,
-    "eia_crude_stocks_zscore": 1387,
-    "eia_total_pet_stocks_zscore": 1387,
-    "eia_gas_demand_trend": 1387,
-    "eia_gas_chg_1w": 1399,
-    "eia_gas_chg_4w": 1396,
-    "eia_gas_chg_12w": 1388
+    "eia_gas_us_regular": 1402,
+    "eia_gas_us_midgrade": 1402,
+    "eia_gas_us_premium": 1402,
+    "eia_gas_us_diesel": 1402,
+    "eia_gas_stocks_total": 1401,
+    "eia_crude_stocks": 1401,
+    "eia_total_pet_stocks": 1401,
+    "eia_gas_demand": 1401,
+    "eia_crude_input_mbbl": 1401,
+    "eia_crude_imports": 1401,
+    "eia_gas_days_supply": 1401,
+    "eia_gas_stocks_total_zscore": 1388,
+    "eia_crude_stocks_zscore": 1388,
+    "eia_total_pet_stocks_zscore": 1388,
+    "eia_gas_demand_trend": 1388,
+    "eia_gas_chg_1w": 1400,
+    "eia_gas_chg_4w": 1397,
+    "eia_gas_chg_12w": 1389
   },
   "history_start": "2000-01-01",
-  "history_end": "2026-11-03",
+  "history_end": "2026-11-10",
   "fundamental_availability_lag_weeks": 1,
   "price_series_ids": {
     "eia_gas_us_regular": "PET.EMM_EPMRU_PTE_NUS_DPG.W",
@@ -53,8 +53,8 @@
     "eia_gas_us_diesel": "PET.EMD_EPD2D_PTE_NUS_DPG.W"
   },
   "days_supply_units": "thousand_barrels / thousand_barrels_per_day",
-  "master_parquet_sha256": "ed9d422a97592924e48345051f76dddf9739bb563f6e9f8841ba1d07dbc1e140",
-  "pipeline_run_id": "41725796065",
+  "master_parquet_sha256": "2f49b6119806745cc558796abd508229180f8e5dab2b15d1cd9e53f4da5eb8bb",
+  "pipeline_run_id": "42909243057",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "f63d3f0b2ef8affcdf6a3390a8573feec4bf0b6e"
+  "source_code_sha": "7d7f8a988eadd5e270b4860d573412ec7620d730"
 }
