@@ -1,59 +1,59 @@
 {
   "script_version": "GAS_PART9_V3_HAC_ELIGIBLE_COHORT",
-  "run_utc": "2026-11-10T21:54:48.956900+00:00",
-  "n_realized": 7,
+  "run_utc": "2026-11-12T00:09:46.553654+00:00",
+  "n_realized": 8,
   "all_time_metrics": {
-    "mae": 0.0729,
-    "rmse": 0.0993,
-    "mape": 1.7434,
-    "dir_acc": 0.1429,
-    "n_realized": 7
+    "mae": 0.0837,
+    "rmse": 0.1087,
+    "mape": 2.0468,
+    "dir_acc": 0.125,
+    "n_realized": 8
   },
   "naive_metrics": {
-    "mae": 0.0729,
-    "rmse": 0.0993,
-    "mape": 1.7434,
-    "dir_acc": 0.1429
+    "mae": 0.0837,
+    "rmse": 0.1087,
+    "mape": 2.0468,
+    "dir_acc": 0.125
   },
   "rolling_metrics": {
     "rolling_4w": {
-      "mae": 0.0403,
-      "rmse": 0.0643,
-      "mape": 1.0001,
+      "mae": 0.0785,
+      "rmse": 0.1025,
+      "mape": 2.0007,
       "dir_acc": 0.25,
       "n": 4
     },
     "rolling_8w": {
-      "mae": 0.0729,
-      "rmse": 0.0993,
-      "mape": 1.7434,
-      "dir_acc": 0.1429,
-      "n": 7
+      "mae": 0.0837,
+      "rmse": 0.1087,
+      "mape": 2.0468,
+      "dir_acc": 0.125,
+      "n": 8
     },
     "rolling_13w": {
-      "mae": 0.0729,
-      "rmse": 0.0993,
-      "mape": 1.7434,
-      "dir_acc": 0.1429,
-      "n": 7
+      "mae": 0.0837,
+      "rmse": 0.1087,
+      "mape": 2.0468,
+      "dir_acc": 0.125,
+      "n": 8
     },
     "rolling_26w": {
-      "mae": 0.0729,
-      "rmse": 0.0993,
-      "mape": 1.7434,
-      "dir_acc": 0.1429,
-      "n": 7
+      "mae": 0.0837,
+      "rmse": 0.1087,
+      "mape": 2.0468,
+      "dir_acc": 0.125,
+      "n": 8
     }
   },
   "diebold_mariano": {
     "dm_method": "DIEBOLD_MARIANO_HLN_HAC",
-    "dm_n": 7,
+    "dm_n": 8,
     "dm_alpha": 0.1,
-    "dm_hac_lags": null,
-    "dm_mean_loss_advantage": null,
+    "dm_hac_lags": 2,
+    "dm_mean_loss_advantage": 0.0,
     "dm_t_stat": null,
     "dm_p_value": null,
-    "dm_interpretation": "INSUFFICIENT_DATA"
+    "dm_interpretation": "DEGENERATE_LOSS_DIFFERENTIAL"
   },
   "concept_drift": {
     "drift_detected": false,
@@ -64,16 +64,16 @@
   },
   "model_health": {
     "health_status": "INSUFFICIENT_DATA",
-    "n_realized": 7,
+    "n_realized": 8,
     "min_required": 52,
     "issues": [
-      "Only 7 realized observations (min 52)"
+      "Only 8 realized observations (min 52)"
     ],
     "recommendation": "Continue accumulating live data before evaluation."
   },
   "beats_naive_pct": 0.0,
   "cohort_contract": "prospective_exact_target_only",
-  "pipeline_run_id": "42909243057",
+  "pipeline_run_id": "43125175486",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "7d7f8a988eadd5e270b4860d573412ec7620d730"
+  "source_code_sha": "7a5292c85cd844e8c307e88a6c5deaf255162697"
 }
