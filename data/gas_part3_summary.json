@@ -1,6 +1,6 @@
 {
   "script_version": "GAS_PART3_V3_VERIFIED_FUSION",
-  "run_utc": "2026-11-10T21:54:47.916108+00:00",
+  "run_utc": "2026-11-17T23:38:33.199110+00:00",
   "active_sleeves": [
     "part2"
   ],
@@ -8,36 +8,36 @@
     "part2": 1.0
   },
   "latest_prediction": {
-    "decision_date": "2026-11-10",
-    "target_date": "2026-11-16",
-    "anchor_week": "2026-11-09",
+    "decision_date": "2026-11-17",
+    "target_date": "2026-11-23",
+    "anchor_week": "2026-11-16",
     "is_live_forecast": 1,
-    "pred_fusion": 3.836,
-    "pred_candidate": 3.7674,
-    "pred_persistence": 3.836,
+    "pred_fusion": 3.633,
+    "pred_candidate": 3.5513,
+    "pred_persistence": 3.633,
     "confidence": "NOT_VALIDATED",
-    "regime": "NORMAL__STATE_3",
+    "regime": "NORMAL__STATE_1",
     "operator_validated": false,
     "publication_mode": "FAIL_CLOSED_PERSISTENCE",
-    "pipeline_run_id": "42909243057",
+    "pipeline_run_id": "44200829974",
     "pipeline_run_attempt": "1",
-    "source_code_sha": "7d7f8a988eadd5e270b4860d573412ec7620d730"
+    "source_code_sha": "95f9f794a6decb2d99647df3162719c46046954e"
   },
-  "prediction_log_rows": 11,
+  "prediction_log_rows": 12,
   "operator_validated": false,
   "publication_mode": "FAIL_CLOSED_PERSISTENCE",
   "fusion_operator_validation": {
     "operator_validated": false,
-    "ensemble_rmse": 0.1512821704854347,
-    "persistence_rmse": 0.1217829879492458,
-    "paired_p_value": 0.997281475847449,
+    "ensemble_rmse": 0.14935143799120779,
+    "persistence_rmse": 0.12498322964425143,
+    "paired_p_value": 0.9918430397829578,
     "paired_test_method": "DIEBOLD_MARIANO_HLN_HAC",
     "positive_folds": 0,
     "required_positive_folds": 3,
     "n_paired": 52
   },
-  "fusion_oof_sha256": "838acf89293e983a976f23706ac361f55aab288226b05e95ec9c60210ef0a1d0",
-  "pipeline_run_id": "42909243057",
+  "fusion_oof_sha256": "211f6c2b97cac08a4dbdafe604df35140cb34d3da80619d5ec0576a805cb0291",
+  "pipeline_run_id": "44200829974",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "7d7f8a988eadd5e270b4860d573412ec7620d730"
+  "source_code_sha": "95f9f794a6decb2d99647df3162719c46046954e"
 }
