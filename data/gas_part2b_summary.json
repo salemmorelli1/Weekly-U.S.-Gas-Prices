@@ -1,19 +1,19 @@
 {
   "script_version": "GAS_PART2B_V3_NESTED_OOF",
-  "run_utc": "2026-11-17T23:38:31.959547+00:00",
+  "run_utc": "2026-11-25T01:00:49.005615+00:00",
   "xgb_sleeve_recommended": false,
-  "xgb_val_rmse": 0.15027470084049396,
-  "baseline_val_rmse": 0.1494,
+  "xgb_val_rmse": 0.14013767096972246,
+  "baseline_val_rmse": 0.1493,
   "xgb_metrics": {
-    "val_rmse": 0.1503,
-    "val_mae": 0.1091,
-    "val_mape": 2.886,
+    "val_rmse": 0.1401,
+    "val_mae": 0.1009,
+    "val_mape": 2.667,
     "n_configs": 3
   },
   "latest_forecast": {
-    "anchor_week": "2026-11-16",
-    "target_week": "2026-11-23",
-    "pred_xgb": 3.5328,
+    "anchor_week": "2026-11-23",
+    "target_week": "2026-11-30",
+    "pred_xgb": 3.3885,
     "is_true_live_forecast": true
   },
   "n_configs_trained": 3,
@@ -21,19 +21,19 @@
   "validation_protocol": "NESTED_BLOCKED_OOF_V1",
   "operator_validation": {
     "operator_validated": false,
-    "ensemble_rmse": 0.15027470084049396,
-    "persistence_rmse": 0.12498322964425143,
-    "paired_p_value": 0.9940490866526643,
+    "ensemble_rmse": 0.14013767096972246,
+    "persistence_rmse": 0.12723819274222536,
+    "paired_p_value": 0.9259176295907005,
     "paired_test_method": "DIEBOLD_MARIANO_HLN_HAC",
-    "positive_folds": 0,
+    "positive_folds": 1,
     "required_positive_folds": 3,
     "n_paired": 52
   },
-  "oof_sha256": "231367b0064f86b2d8411c773b02922d90ad578b0bbb16a3d874861708196353",
-  "forecast_tape_sha256": "d97c897606dfc1c7eb2f157c7db0b3164f8a5e7fe0fd289abf7b224cc178d9be",
-  "feature_matrix_sha256": "c638120ebe63651c1d7d37f7edf973f6f69abf54bdb7cb70abff16d8de917b86",
+  "oof_sha256": "6092371d04d7cee2f1b1fef6a54f180f663f632c65637df133615c1d71814f03",
+  "forecast_tape_sha256": "3066dd40f12a2a4590734d806ecfd77c01c711da71c9ffd28234aef00d2a772d",
+  "feature_matrix_sha256": "211c1feb7e7ce35f426286ff5baa02e8b5ae220acd99235e4adc240ea5799fa5",
   "core_operator_validated": false,
-  "pipeline_run_id": "44200829974",
+  "pipeline_run_id": "45522225583",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "95f9f794a6decb2d99647df3162719c46046954e"
+  "source_code_sha": "131db9a5ff994351325d65ce4744912b233f55c9"
 }

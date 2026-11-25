@@ -1,7 +1,7 @@
 {
   "script_version": "GAS_PART0_V3_EXACT_OBSERVATIONS",
-  "run_utc": "2026-11-17T23:36:55.979827+00:00",
-  "n_weeks": 1403,
+  "run_utc": "2026-11-25T00:59:11.297117+00:00",
+  "n_weeks": 1404,
   "n_columns": 19,
   "columns": [
     "week_date",
@@ -28,19 +28,19 @@
   "price_observation_contract": "EXACT_MONDAY_NO_FILL_V1",
   "target_series_id": "GASREGCOVW",
   "freshness": {
-    "latest_week": "2026-11-16",
-    "forecast_target_week": "2026-11-23",
-    "decision_date_eastern": "2026-11-17",
+    "latest_week": "2026-11-23",
+    "forecast_target_week": "2026-11-30",
+    "decision_date_eastern": "2026-11-24",
     "age_days": 1,
-    "n_weeks": 1403,
+    "n_weeks": 1404,
     "has_min_history": true,
     "source_week_is_monday": true,
     "target_is_prospective": true,
     "data_freshness_ok": true,
     "freshness_status": "OK"
   },
-  "master_parquet_sha256": "71e2252164b8c01e8bc6585a55e78a33f747bbde8cf68bba345faec47449ba58",
-  "pipeline_run_id": "44200829974",
+  "master_parquet_sha256": "de6a4b40a5d9056ef9c28c887fc3c64d633a26aaafc1719c30ce012aef408e02",
+  "pipeline_run_id": "45522225583",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "95f9f794a6decb2d99647df3162719c46046954e"
+  "source_code_sha": "131db9a5ff994351325d65ce4744912b233f55c9"
 }

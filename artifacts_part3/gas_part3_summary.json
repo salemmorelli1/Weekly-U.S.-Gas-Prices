@@ -1,6 +1,6 @@
 {
   "script_version": "GAS_PART3_V3_VERIFIED_FUSION",
-  "run_utc": "2026-11-17T23:38:33.199110+00:00",
+  "run_utc": "2026-11-25T01:00:50.353323+00:00",
   "active_sleeves": [
     "part2"
   ],
@@ -8,36 +8,36 @@
     "part2": 1.0
   },
   "latest_prediction": {
-    "decision_date": "2026-11-17",
-    "target_date": "2026-11-23",
-    "anchor_week": "2026-11-16",
+    "decision_date": "2026-11-24",
+    "target_date": "2026-11-30",
+    "anchor_week": "2026-11-23",
     "is_live_forecast": 1,
-    "pred_fusion": 3.633,
-    "pred_candidate": 3.5513,
-    "pred_persistence": 3.633,
+    "pred_fusion": 3.461,
+    "pred_candidate": 3.4018,
+    "pred_persistence": 3.461,
     "confidence": "NOT_VALIDATED",
-    "regime": "NORMAL__STATE_1",
+    "regime": "NORMAL__STATE_0",
     "operator_validated": false,
     "publication_mode": "FAIL_CLOSED_PERSISTENCE",
-    "pipeline_run_id": "44200829974",
+    "pipeline_run_id": "45522225583",
     "pipeline_run_attempt": "1",
-    "source_code_sha": "95f9f794a6decb2d99647df3162719c46046954e"
+    "source_code_sha": "131db9a5ff994351325d65ce4744912b233f55c9"
   },
-  "prediction_log_rows": 12,
+  "prediction_log_rows": 13,
   "operator_validated": false,
   "publication_mode": "FAIL_CLOSED_PERSISTENCE",
   "fusion_operator_validation": {
     "operator_validated": false,
-    "ensemble_rmse": 0.14935143799120779,
-    "persistence_rmse": 0.12498322964425143,
-    "paired_p_value": 0.9918430397829578,
+    "ensemble_rmse": 0.14929540674906983,
+    "persistence_rmse": 0.12723819274222536,
+    "paired_p_value": 0.9835178222052149,
     "paired_test_method": "DIEBOLD_MARIANO_HLN_HAC",
     "positive_folds": 0,
     "required_positive_folds": 3,
     "n_paired": 52
   },
-  "fusion_oof_sha256": "211f6c2b97cac08a4dbdafe604df35140cb34d3da80619d5ec0576a805cb0291",
-  "pipeline_run_id": "44200829974",
+  "fusion_oof_sha256": "33fc980598b606dbcfe29f6c66f0c045353bc2a89fa23e5c4b43f46c61f50d01",
+  "pipeline_run_id": "45522225583",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "95f9f794a6decb2d99647df3162719c46046954e"
+  "source_code_sha": "131db9a5ff994351325d65ce4744912b233f55c9"
 }
