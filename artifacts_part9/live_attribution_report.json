@@ -1,53 +1,53 @@
 {
   "script_version": "GAS_PART9_V3_HAC_ELIGIBLE_COHORT",
-  "run_utc": "2026-11-25T01:00:51.575601+00:00",
-  "n_realized": 9,
+  "run_utc": "2026-11-26T01:39:45.431958+00:00",
+  "n_realized": 10,
   "all_time_metrics": {
-    "mae": 0.097,
-    "rmse": 0.1228,
-    "mape": 2.4402,
-    "dir_acc": 0.1111,
-    "n_realized": 9
+    "mae": 0.1045,
+    "rmse": 0.1286,
+    "mape": 2.6932,
+    "dir_acc": 0.1,
+    "n_realized": 10
   },
   "naive_metrics": {
-    "mae": 0.097,
-    "rmse": 0.1228,
-    "mape": 2.4402,
-    "dir_acc": 0.1111
+    "mae": 0.1045,
+    "rmse": 0.1286,
+    "mape": 2.6932,
+    "dir_acc": 0.1
   },
   "rolling_metrics": {
     "rolling_4w": {
-      "mae": 0.122,
-      "rmse": 0.1436,
-      "mape": 3.2217,
-      "dir_acc": 0.25,
+      "mae": 0.165,
+      "rmse": 0.1673,
+      "mape": 4.4641,
+      "dir_acc": 0.0,
       "n": 4
     },
     "rolling_8w": {
-      "mae": 0.088,
-      "rmse": 0.1158,
-      "mape": 2.2582,
+      "mae": 0.106,
+      "rmse": 0.1304,
+      "mape": 2.7982,
       "dir_acc": 0.125,
       "n": 8
     },
     "rolling_13w": {
-      "mae": 0.097,
-      "rmse": 0.1228,
-      "mape": 2.4402,
-      "dir_acc": 0.1111,
-      "n": 9
+      "mae": 0.1045,
+      "rmse": 0.1286,
+      "mape": 2.6932,
+      "dir_acc": 0.1,
+      "n": 10
     },
     "rolling_26w": {
-      "mae": 0.097,
-      "rmse": 0.1228,
-      "mape": 2.4402,
-      "dir_acc": 0.1111,
-      "n": 9
+      "mae": 0.1045,
+      "rmse": 0.1286,
+      "mape": 2.6932,
+      "dir_acc": 0.1,
+      "n": 10
     }
   },
   "diebold_mariano": {
     "dm_method": "DIEBOLD_MARIANO_HLN_HAC",
-    "dm_n": 9,
+    "dm_n": 10,
     "dm_alpha": 0.1,
     "dm_hac_lags": 2,
     "dm_mean_loss_advantage": 0.0,
@@ -64,16 +64,16 @@
   },
   "model_health": {
     "health_status": "INSUFFICIENT_DATA",
-    "n_realized": 9,
+    "n_realized": 10,
     "min_required": 52,
     "issues": [
-      "Only 9 realized observations (min 52)"
+      "Only 10 realized observations (min 52)"
     ],
     "recommendation": "Continue accumulating live data before evaluation."
   },
   "beats_naive_pct": 0.0,
   "cohort_contract": "prospective_exact_target_only",
-  "pipeline_run_id": "45522225583",
+  "pipeline_run_id": "45737210309",
   "pipeline_run_attempt": "1",
-  "source_code_sha": "131db9a5ff994351325d65ce4744912b233f55c9"
+  "source_code_sha": "c8f978c9c20bc30ad0f732d2b3a643ab46b19179"
 }
